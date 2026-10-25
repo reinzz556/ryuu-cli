@@ -166,7 +166,7 @@ test('/addmodel and /delmodel change the /model list, and /help documents them',
     assert.match(await run(`/addmodel ${id}`), /already in the model list/);
     assert.match(await run('/addmodel bad id'), /not a usable model id/);
     assert.match(
-      await run('/delmodel deepseek-ai/deepseek-v4.1-flash'),
+      await run('/delmodel nvidia/nemotron-3.5-super-vl-120b-a12b'),
       /built-in catalog model and cannot be removed/,
     );
 

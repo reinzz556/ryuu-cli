@@ -19,7 +19,7 @@ kompatibel dengan OpenAI.
   │                 autonomous coding intelligence · NVIDIA                  │
   │                                                                          │
   ├─ ◆ TELEMETRY ────────────────────────────────────────────────────────────┤
-  │ model      deepseek-ai/deepseek-v4.1-flash                               │
+  │ model      nvidia/nemotron-3.5-super-vl-120b-a12b                       │
   │ workspace  /path/to/your/project                                         │
   │ runtime    Node.js v25.x · linux                                         │
   │ access     ask · shell is not a sandbox                                  │
@@ -589,7 +589,7 @@ panggilan API.
 | Variabel | Bawaan | Makna |
 | --- | --- | --- |
 | `NVIDIA_API_KEY` | — (wajib) | Kunci API. Tidak pernah dicatat atau di-commit. |
-| `NVIDIA_MODEL` | `deepseek-ai/deepseek-v4.1-flash` | ID model. |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | ID model. (note: faster) |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base URL kompatibel OpenAI. |
 | `AGENT_WORKSPACE` | `.` | Direktori yang boleh disentuh agent. Diresolusi dan diperiksa realpath-nya. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |
@@ -793,9 +793,7 @@ terbatas beserta jitter, serta menghormati `Retry-After` bila ada.
 
 ### Model bawaan sangat lambat atau habis waktu
 
-Pada **2026-10-20**, endpoint `deepseek-ai/deepseek-v4.1-flash` yang dihosting
-habis waktu untuk prompt minimal (>60s, tanpa byte) sementara model lain dengan
-kunci yang sama menjawab dalam 1–2s. Forum NVIDIA punya laporan terbuka tentang
+Model bawaan sekarang `nvidia/nemotron-3.5-super-vl-120b-a12b` (note: faster).\nEndpoint `deepseek-ai/deepseek-v4.1-flash` dihapus dari bawaan karena sering timeout di sisi provider. Forum NVIDIA punya laporan terbuka tentang
 respons 3–5+ menit untuk model ini, jadi ini latensi sisi-provider, bukan
 kegagalan autentikasi. `GET /v1/models` dan
 `GET /v1/models/deepseek-ai/deepseek-v4.1-flash` tetap berhasil dengan kunci yang

@@ -21,7 +21,7 @@ async function withConfig(fn, overrides = {}) {
 
 const successResponse = {
   id: 'chatcmpl-1',
-  model: 'deepseek-ai/deepseek-v4.1-flash',
+  model: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
   choices: [{
     message: {
       role: 'assistant',

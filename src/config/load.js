@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigError } from '../utils/errors.js';
 
-export const DEFAULT_MODEL = 'deepseek-ai/deepseek-v4.1-flash';
+export const DEFAULT_MODEL = 'nvidia/nemotron-3.5-super-vl-120b-a12b'; // note: faster
 export const DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 
 /**
@@ -12,9 +12,8 @@ export const DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
  * be typed by hand.
  */
 export const MODEL_CATALOG = [
-  DEFAULT_MODEL,
+  'nvidia/nemotron-3.5-super-vl-120b-a12b', // default, note: faster
   'z-ai/glm-5.3-flash',
-  'nvidia/nemotron-3.5-super-vl-120b-a12b',
   'google/diffusiongemma-26b-a4b-it',
   'poolside/laguna-xs-2.1',
   'stepfun-ai/step-5-preview',

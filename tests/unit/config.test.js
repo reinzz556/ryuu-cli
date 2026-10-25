@@ -21,7 +21,7 @@ test('valid config gets documented defaults', async () => {
   try {
     const raw = buildRawConfig(baseEnv(root), { cwd: root });
     const { config, warnings } = validateConfig(raw, { cwd: root });
-    assert.equal(config.model, 'deepseek-ai/deepseek-v4.1-flash');
+    assert.equal(config.model, 'nvidia/nemotron-3.5-super-vl-120b-a12b');
     assert.equal(config.baseURL, 'https://integrate.api.nvidia.com/v1');
     assert.equal(config.maxSteps, 0);
     assert.equal(config.maxOutputTokens, 4096);

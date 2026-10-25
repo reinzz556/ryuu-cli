@@ -305,7 +305,7 @@ test('slash commands work: status, files, tools, config, sessions, diff, undo', 
 
 test('/model lists the catalog and switches by number, rejecting raw ids', async () => {
   // Use a catalog model as the starting point so the '← current' marker is real.
-  const ctx = await setup({ responses: [], configOverrides: { model: 'deepseek-ai/deepseek-v4.1-flash' } });
+  const ctx = await setup({ responses: [], configOverrides: { model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' } });
   try {
     const run = (args = '') =>
       ctx.app.commands.execute({ name: 'model', args, parts: args ? args.split(/\s+/) : [] });
@@ -313,7 +313,7 @@ test('/model lists the catalog and switches by number, rejecting raw ids', async
     await run('');
     const listing = ctx.stdout.getData();
     assert.match(listing, /Available models:/);
-    assert.match(listing, /1 {2}deepseek-ai\/deepseek-v4\.1-flash {2}← current/);
+    assert.match(listing, /1 {2}nvidia\/nemotron-3\.5-super-vl-120b-a12b {2}← current/);
     assert.match(listing, /2 {2}z-ai\/glm-5.3-flash/);
     assert.match(listing, /nvidia\/nemotron-3\.5-super-vl-120b-a12b/);
     assert.match(listing, /google\/diffusiongemma-26b-a4b-it/);
@@ -334,7 +334,7 @@ test('/model lists the catalog and switches by number, rejecting raw ids', async
     assert.equal(prefs.model, 'z-ai/glm-5.3-flash', '/model must persist the choice for future runs');
 
     ctx.stdout.reset();
-    await run('deepseek-ai/deepseek-v4.1-flash');
+    await run('nvidia/nemotron-3.5-super-vl-120b-a12b');
     assert.match(ctx.stdout.getData(), /Use a number, not a model id/);
     assert.equal(ctx.config.model, 'z-ai/glm-5.3-flash', 'raw model ids must be rejected');
 
@@ -348,7 +348,7 @@ test('/model lists the catalog and switches by number, rejecting raw ids', async
 
     ctx.stdout.reset();
     await run('99');
-    assert.match(ctx.stdout.getData(), /Unknown model number: 99\. Valid: 1-6/);
+    assert.match(ctx.stdout.getData(), /Unknown model number: 99\. Valid: 1-5/);
   } finally {
     await ctx.cleanup();
   }
