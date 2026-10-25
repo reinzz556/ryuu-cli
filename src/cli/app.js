@@ -7,7 +7,7 @@ import { UndoManager } from '../services/undo.js';
 import { createLogger } from '../services/logger.js';
 import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
-import { createProvider } from '../providers/nvidia.js';
+import { createActiveProvider, selectionFor } from '../providers/index.js';
 import { Agent } from '../agent/agent.js';
 import { ApprovalManager } from '../agent/approvals.js';
 import { Renderer } from './renderer.js';
@@ -15,6 +15,7 @@ import { Tui } from './tui.js';
 import { PromptSession } from './prompts.js';
 import { createCommands, parseCommandLine, shellCommandFromLine } from './commands.js';
 import { runDoctor } from '../services/doctor.js';
+import { readProviderModel, stateDirFor, writeProviderPreference } from '../services/preferences.js';
 import { RyuuError } from '../utils/errors.js';
 import { readVersion } from '../utils/version.js';
 
@@ -72,13 +73,14 @@ export async function createApp({
     color: cliOptions.color ?? null,
     debug: Boolean(config.debug),
   });
+  const providerSecrets = (config.providers || []).map((entry) => entry.apiKey);
   const searchSecrets = [
     config.webSearchApiKey,
     config.youApiKey,
     config.firecrawlApiKey,
     config.tavilyApiKey,
   ].filter(Boolean);
-  const logger = createLogger(config, { stderr, secrets: searchSecrets });
+  const logger = createLogger(config, { stderr, secrets: [...providerSecrets, ...searchSecrets] });
   if (config.webMcpDebug) logger.setLevel('debug');
   const workspace = new Workspace(config.workspace, { logger });
   const processes = new ProcessManager({
@@ -90,7 +92,7 @@ export async function createApp({
   });
   const sessionStore = new SessionStore({
     dir: config.historyDir,
-    secrets: [config.apiKey, ...searchSecrets],
+    secrets: [config.apiKey, ...providerSecrets, ...searchSecrets],
     logger,
   });
   const undo = new UndoManager({ workspace, dir: config.undoDir, logger });
@@ -102,7 +104,7 @@ export async function createApp({
     webManager: injectedWebManager,
     onEvent: (event) => renderer.webSearchStatus?.(event),
   });
-  const provider = injectedProvider || createProvider(config, { logger });
+  const provider = injectedProvider || createActiveProvider(config, { logger });
   if (!provider.config) provider.config = config;
   provider.processes = processes;
   const projectCache = new ProjectSummaryCache({ file: path.join(config.cacheDir, 'project-summary.json') });
@@ -243,6 +245,49 @@ export async function createApp({
     return answer.value;
   }
 
+  /** Limitations advertised by the active provider (never assumed present). */
+  function providerLimitations() {
+    const capabilities = provider.capabilities || config.capabilities || {};
+    const notes = [];
+    if (capabilities.tools === false) {
+      notes.push(
+        `${config.providerName} does not advertise tool calling: the agent can answer, but cannot read or change files through tools.`,
+      );
+    }
+    if (capabilities.streaming === false) {
+      notes.push(`${config.providerName} does not advertise streaming: responses arrive as one block.`);
+    }
+    return notes;
+  }
+
+  /**
+   * Switch the active provider (used by /provider). The provider object is
+   * updated in place, so the agent keeps its conversation memory and worklog.
+   */
+  async function switchProvider(providerId, { model = null } = {}) {
+    const stateDir = stateDirFor(config.workspace);
+    const remembered = model ? null : await readProviderModel(stateDir, providerId);
+    const selection = selectionFor(config, providerId, { model: model || remembered || null });
+    if (typeof provider.updateSelection === 'function') {
+      provider.updateSelection(selection);
+    } else if (provider.config) {
+      // Test doubles: keep their config view in sync with the effective one.
+      Object.assign(provider.config, selection);
+    }
+    Object.assign(config, {
+      providerId: selection.providerId,
+      provider: selection.providerId,
+      providerName: selection.providerName,
+      apiKeyEnv: selection.apiKeyEnv,
+      apiKey: selection.apiKey,
+      baseURL: selection.baseURL,
+      model: selection.model,
+      capabilities: selection.capabilities,
+    });
+    const persisted = await writeProviderPreference(stateDir, selection.providerId);
+    return { ...selection, persisted };
+  }
+
   state = {
     config,
     workspace,
@@ -258,6 +303,8 @@ export async function createApp({
     getAgent: () => agent,
     getLastSummary: () => lastSummary,
     getActiveTask: () => activeTask,
+    switchProvider,
+    providerLimitations,
     cancelActiveTask: () => {
       if (!activeTask) return false;
       activeTask.controller.abort();
@@ -281,7 +328,7 @@ export async function createApp({
     renderer.banner({
       version,
       model: config.model,
-      provider: 'NVIDIA Integrate API (OpenAI-compatible)',
+      provider: config.providerName,
       workspace: workspace.root,
       node: process.version,
       approvalPolicy: cliOptions.autoApprove
@@ -289,6 +336,7 @@ export async function createApp({
         : config.approvalPolicy,
       logFile: logger.logFile,
     });
+    for (const note of providerLimitations()) renderer.warn(note);
   }
 
   async function readTask(firstLine) {
@@ -384,6 +432,8 @@ export async function createApp({
     getProjectSummary,
     getLastSummary: () => lastSummary,
     cancelActiveTask: state.cancelActiveTask,
+    setProvider: switchProvider,
+    providerLimitations,
     close,
   };
 }

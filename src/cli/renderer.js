@@ -33,13 +33,13 @@ const STATUS_STYLE = {
 };
 
 const ERROR_HINTS = {
-  AUTH_INVALID: 'Check NVIDIA_API_KEY in your environment or .env, then run `ryuu --doctor --live`.',
-  AUTH_FORBIDDEN: 'Verify this API key has access to the selected model on build.nvidia.com.',
-  MODEL_NOT_FOUND: 'Check NVIDIA_MODEL and NVIDIA_BASE_URL (must end with /v1).',
-  RATE_LIMIT: 'Free NVIDIA endpoints have provider-side quotas. Wait, reduce context, or switch models.',
-  TOOLS_UNSUPPORTED: 'This model may not support OpenAI-style tool calling. Set NVIDIA_MODEL to a tool-capable model.',
+  AUTH_INVALID: 'Check the active provider key in your environment or .env (NVIDIA_API_KEY for nvidia, TOKENHARBOR_API_KEY for tokenharbor), then run `ryuu --doctor --live`.',
+  AUTH_FORBIDDEN: 'Verify this key has access to the selected model in the provider dashboard; /provider shows the active provider.',
+  MODEL_NOT_FOUND: 'Check the model id with /model and the base URL with /config (it must end with /v1).',
+  RATE_LIMIT: 'The provider may enforce quotas. Wait, reduce context, or switch model/provider with /model and /provider.',
+  TOOLS_UNSUPPORTED: 'This model may not support OpenAI-style tool calling. Pick a tool-capable model with /model.',
   CONTEXT_LENGTH: 'Start a new session or use a smaller task; AGENT_MAX_CONTEXT_CHARS controls local compaction.',
-  PROVIDER_NETWORK: 'Check network/DNS access to the NVIDIA API and any proxy settings.',
+  PROVIDER_NETWORK: 'Check network/DNS access to the active provider and any proxy settings; /provider shows the endpoint.',
   PROVIDER_TIMEOUT: 'Increase AGENT_REQUEST_TIMEOUT_MS or reduce the task size.',
   TASK_TIMEOUT: 'Increase AGENT_MAX_TASK_DURATION_MS or split the task.',
   CONFIG_INVALID: 'Fix .env (see .env.example) and restart.',

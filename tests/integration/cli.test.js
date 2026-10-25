@@ -28,7 +28,18 @@ test('--help prints usage and exits 0', () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /Ryuu Agent CLI/);
   assert.match(result.stdout, /--doctor/);
+  assert.match(result.stdout, /--provider <id>/);
   assert.match(result.stdout, /NVIDIA_API_KEY/);
+  assert.match(result.stdout, /TOKENHARBOR_API_KEY/);
+});
+
+test('--provider tokenharbor without its key fails with the variable name', () => {
+  const result = runCli(['--provider', 'tokenharbor', 'say hello'], {
+    env: { NVIDIA_API_KEY: 'nvapi-test-key-123456', TOKENHARBOR_API_KEY: '' },
+  });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /TOKENHARBOR_API_KEY is not set for provider tokenharbor/);
+  assert.match(result.stderr, /CONFIG_INVALID/);
 });
 
 test('--version prints the package version', () => {

@@ -3,11 +3,12 @@
 Agen coding AI otonom yang setiap aksi tulis/eksekusi harus disetujui dulu, untuk
 terminal Anda. Ryuu memeriksa workspace, menyusun rencana, memanggil tool,
 menunjukkan apa yang sedang dilakukannya, dan melaporkan apa yang berubah —
-didukung oleh NVIDIA Integrate API melalui antarmuka Chat Completions yang
-kompatibel dengan OpenAI.
+didukung oleh beberapa provider AI melalui antarmuka Chat Completions yang
+kompatibel dengan OpenAI: NVIDIA Integrate API dan Token Harbor sudah tersedia,
+dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 
 ```
-  ╭─ ◢ RYUU // AGENT OS ──────────────────────────────────────────── v0.2.0 ─╮
+  ╭─ ◢ RYUU // AGENT OS ──────────────────────────────────────────── v0.2.1 ─╮
   │                                                                          │
   │                   ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗                    │
   │                   ██╔══██╗╚██╗ ██╔╝██║   ██╗██║   ██╗                    │
@@ -116,7 +117,7 @@ kompatibel dengan OpenAI.
 | npm | 10+ (sudah menyertai Node 25). |
 | OS | Linux, macOS, atau Windows. Perilaku pensinyalan proses berbeda di Windows; lihat [Perilaku proses](#perilaku-proses). |
 | Jaringan | Dibutuhkan untuk panggilan model langsung. Git opsional dan hanya dipakai untuk `/diff` dan `inspect_git`. |
-| Kunci NVIDIA | Dibutuhkan untuk panggilan langsung: `NVIDIA_API_KEY`. |
+| Kunci provider | Dibutuhkan untuk panggilan langsung: `NVIDIA_API_KEY` untuk provider `nvidia`, `TOKENHARBOR_API_KEY` untuk provider `tokenharbor`. |
 
 Instal Node 25 dengan [nvm](https://github.com/nvm-sh/nvm):
 
@@ -148,12 +149,29 @@ proses dan **variabel environment menang atas nilai `.env`**:
 
 ```bash
 export NVIDIA_API_KEY="nvapi-..."
+export TOKENHARBOR_API_KEY="..."
 ```
 
-Ambil kunci di <https://build.nvidia.com/>. Jangan pernah meng-commit kunci asli,
-menempelkannya ke issue, atau memasukkannya ke log. CLI tidak pernah mencetak
-kunci: `/config` menampilkan `set (redacted)`, dan log/sesi sudah melewati proses
-penyingkatan (redaction).
+Ambil kunci NVIDIA di <https://build.nvidia.com/> dan kunci Token Harbor di
+<https://tokenharbor.ai/>. Jangan pernah meng-commit kunci asli, menempelkannya
+ke issue, atau memasukkannya ke log. CLI tidak pernah mencetak kunci: `/config`
+menampilkan `set (redacted)`, dan log/sesi sudah melewati proses penyingkatan
+(redaction). Kunci satu provider tidak pernah dikirim ke provider lain.
+
+Pilih provider aktif secara eksplisit (opsional):
+
+```bash
+# di .env
+RYUU_PROVIDER=tokenharbor
+RYUU_MODEL=deepseek-v4.1-flash:free
+
+# atau per run
+ryuu --provider tokenharbor --model deepseek-v4.1-flash:free "tugas"
+```
+
+Tanpa `RYUU_PROVIDER`, Ryuu memakai `nvidia` bila `NVIDIA_API_KEY` tersedia;
+jika tidak, provider pertama yang punya kunci. Provider yang dipilih dengan
+`/provider` disimpan di `.ryuu/preferences.json` workspace itu.
 
 ### Verifikasi instalasi
 
@@ -226,7 +244,8 @@ Anda percaya.
 | `-v`, `--version` | Menampilkan versi. |
 | `--task "..."` | Tugas sekali jalan eksplisit (tugas posisional juga bisa). |
 | `--workspace <path>` | Override workspace (`AGENT_WORKSPACE`). |
-| `--model <id>` | Override model untuk run ini (`NVIDIA_MODEL`). |
+| `--provider <id>` | Override provider untuk run ini (`RYUU_PROVIDER`), mis. `tokenharbor`. |
+| `--model <id>` | Override model untuk run ini (`RYUU_MODEL`). |
 | `--max-steps <n>` | Batas langkah agent opsional (`0` = tanpa batas, bawaan). |
 | `-y`, `--yes` | Menyetujui otomatis penulisan file untuk sesi ini. |
 | `--read-only` | Menolak setiap aksi tulis, eksekusi, dan destruksi. |
@@ -342,8 +361,9 @@ yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
 | `/memory [clear]` | Menampilkan apa yang diingat agent antar-tugas. | Dibatasi `AGENT_MAX_CONTEXT_CHARS`. |
 | `/worklog` | Menampilkan fakta terverifikasi (file dibaca/diubah, command, temuan) yang akan dipakai agent alih-alih membaca ulang. | Dihapus oleh `/clear`. |
 | `/resume <session-id>` | Memulihkan memori percakapan sebuah sesi tersimpan. | Daftar id dengan `/history`. |
-| `/status` | Model, workspace, batas, jumlah proses/undo, tugas terakhir. | |
-| `/model [n]` | Mendaftarkan katalog model bernomor, atau berpindah model menurut nomor. | Disimpan di `.ryuu/preferences.json`; tetap ada setelah restart. `--model` menimpa per run. |
+| `/status` | Provider, model, endpoint, status kunci, workspace, batas, jumlah proses/undo, tugas terakhir. | |
+| `/provider [id]` | Mendaftarkan provider beserta status kunci dan model bawaannya, atau berpindah provider. | Riwayat percakapan dan worklog tetap. Pilihan disimpan di `.ryuu/preferences.json`; `--provider` menimpa per run. |
+| `/model [n]` | Mendaftarkan model milik provider aktif secara bernomor, atau berpindah model menurut nomor. | Disimpan per provider di `.ryuu/preferences.json`; tetap ada setelah restart. `--model` menimpa per run. |
 | `/addmodel <model-id>` | Menambahkan id model ke daftar `/model`. | Disimpan di `.ryuu/preferences.json`. Id tidak diperiksa ke server: id salah akan gagal saat dipakai, dan itu risiko pengguna. |
 | `/delmodel <model-id>` | Membuang id yang ditambahkan lewat `/addmodel`. | Model bawaan katalog tidak bisa dibuang. Membuang model saat ini tetap menyimpannya untuk sesi ini. |
 | `/cmodel <name>` | Mengeset id model apa pun langsung, tanpa menambahkannya ke daftar. | Alias: `/custommodel`. Aturan tanpa-pemeriksaan sama seperti `/addmodel`. |
@@ -365,32 +385,74 @@ yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
 | `/config` | Konfigurasi efektif, kunci disunting. | |
 | `/doctor [live]` | Diagnostik; `live` membuat satu permintaan API. | |
 
-### Daftar model (`/model`, `/addmodel`, `/delmodel`)
+### Provider dan model (`/provider`, `/model`, `/addmodel`, `/delmodel`)
 
-`/model` menampilkan daftar bernomor berisi katalog bawaan plus setiap id yang
-Anda tambahkan. Id yang ditambahkan ditandai `(added)`, dan yang sedang aktif
-ditandai `← current`.
+Provider adalah endpoint API beserta kuncinya; model adalah id yang dikirim ke
+endpoint itu. Daftar keduanya dideklarasikan di katalog provider, bukan di loop
+agent, sehingga menambah model atau provider tidak menyentuh agent core.
 
-```text
-/model                              # tampilkan daftarnya
-/addmodel meta-llama/llama-3.3-70b-instruct
-/model 7                            # berpindah ke entri 7
-/delmodel meta-llama/llama-3.3-70b-instruct
+| Provider | Nama | Base URL | Kunci | Model bawaan | Kapabilitas yang diumumkan |
+| --- | --- | --- | --- | --- | --- |
+| `nvidia` | NVIDIA Integrate API | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | streaming, tools, reasoning, multimodal |
+| `tokenharbor` | Token Harbor | `https://tokenharbor.ai/v1` | `TOKENHARBOR_API_KEY` | `deepseek-v4.1-flash:free` | streaming, tools, reasoning |
+
+Memilih provider dan model:
+
+```bash
+ryuu --provider tokenharbor                            # default model provider itu
+ryuu --provider tokenharbor --model deepseek-v4.1-flash:free
+RYUU_PROVIDER=tokenharbor ryuu "tugas"                 # sama, lewat environment
 ```
 
-- Daftar dan model terpilih disimpan bersama di `.ryuu/preferences.json` milik
-  workspace saat ini, sehingga keduanya tetap ada setelah restart. `/addmodel`
-  tidak pernah melupakan model terpilih, dan `/model <n>` tidak pernah melupakan
-  id yang ditambahkan.
+Di dalam sesi:
+
+```text
+/provider                           # daftar provider, status kunci, model bawaan
+/provider tokenharbor               # pindah provider; riwayat & worklog tetap
+/model                              # daftar model provider aktif
+/model 2                            # pindah model menurut nomor
+/addmodel model-baru                # tambahkan id ke daftar provider aktif
+/delmodel model-baru                # buang id yang ditambahkan
+```
+
+- `/provider` hanya menampilkan `key set (redacted)` atau `no key (<VARIABEL>)`;
+  nilai kunci tidak pernah dicetak. Provider tanpa kunci tidak bisa dipilih dan
+  pesannya menyebut variabel yang harus diisi.
+- Berpindah provider tidak menghapus memori percakapan atau worklog. Pilihan
+  provider dan model per provider disimpan di `.ryuu/preferences.json` milik
+  workspace saat ini; `--provider`/`--model` hanya berlaku untuk satu run dan
+  tidak menulis pilihan tersimpan.
 - Hanya format id yang divalidasi (huruf, angka, `. _ : / -`, sampai 200 karakter,
-  maksimal 100 id tambahan). Ketersediaan, kuota, ukuran konteks, dan dukungan
-  tool calling **tidak** diperiksa. Salah ketik diterima dan hanya gagal saat
-  model itu dipakai — itu tanggung jawab pengguna.
+  maksimal 100 id tambahan **per provider**). Ketersediaan, kuota, ukuran
+  konteks, dan dukungan tool calling model **tidak** diperiksa. Daftar model
+  adalah id yang ditawarkan CLI, bukan jaminan model itu aktif di server.
 - Entri katalog bawaan tidak bisa dihapus, dan id yang sudah ada tidak
   ditambahkan dua kali.
-- `/cmodel <name>` memilih id untuk sesi ini tanpa menambahkannya ke daftar;
-  `/help addmodel` dan `/help delmodel` menampilkan tutorial yang sama di dalam
-  CLI.
+- `/cmodel <name>` memilih id apa pun untuk provider aktif tanpa menambahkannya
+  ke daftar; `/help addmodel` dan `/help delmodel` menampilkan tutorial yang sama
+  di dalam CLI.
+
+#### Menambah provider sendiri (`RYUU_PROVIDERS`)
+
+Provider tambahan didaftarkan sebagai JSON di `.env` (atau environment). Semua
+provider memakai protokol Chat Completions yang kompatibel OpenAI:
+
+```bash
+RYUU_PROVIDERS='[{"id":"myproxy","name":"My Proxy","baseURL":"https://proxy.example/v1","apiKeyEnv":"MY_PROXY_API_KEY","defaultModel":"model-b","models":[{"id":"model-a","name":"Model A"},{"id":"model-b","name":"Model B"}],"capabilities":{"tools":true,"streaming":true,"reasoning":false}}]'
+```
+
+- `id`, `name`, `baseURL`, `apiKeyEnv`, dan minimal satu model wajib. `id`
+  tidak boleh menabrak provider bawaan.
+- `capabilities` menentukan apakah agent mengirim tools (`tools`), meminta
+  stream (`streaming`), dan menampilkan reasoning bila provider mengirimnya
+  (`reasoning`). Jangan menyalakan `tools` untuk endpoint yang tidak mendukung
+  `tool_calls`: agent akan menampilkan keterbatasan dan tetap bisa menjawab,
+  tetapi tidak bisa membaca atau mengubah file.
+- Setelah ditambahkan, provider muncul di `/provider` dan bisa dipilih dengan
+  `/provider myproxy` atau `--provider myproxy`.
+- Tidak ada fallback otomatis antar-provider AI. Kegagalan provider aktif
+  dilaporkan apa adanya (dengan retry terbatas untuk kegagalan sesaat) agar
+  kunci dan data tidak berpindah ke provider lain tanpa keputusan Anda.
 
 ## Tool yang tersedia untuk model
 
@@ -588,9 +650,17 @@ panggilan API.
 
 | Variabel | Bawaan | Makna |
 | --- | --- | --- |
-| `NVIDIA_API_KEY` | — (wajib) | Kunci API. Tidak pernah dicatat atau di-commit. |
-| `NVIDIA_MODEL` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | ID model. (note: faster) |
-| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base URL kompatibel OpenAI. |
+| `RYUU_PROVIDER` | — | Provider aktif (`nvidia`, `tokenharbor`, atau id dari `RYUU_PROVIDERS`). Bila kosong: `nvidia` kalau kuncinya ada, jika tidak provider pertama yang punya kunci. |
+| `RYUU_MODEL` | — | Override model untuk provider aktif. Menang atas `NVIDIA_MODEL`/`TOKENHARBOR_MODEL`. |
+| `RYUU_API_KEY` | — | Override kunci untuk provider aktif (berguna untuk gateway); variabel kunci provider tetap lebih jelas. |
+| `RYUU_BASE_URL` | — | Override base URL untuk provider aktif. |
+| `RYUU_PROVIDERS` | — | JSON array provider tambahan yang kompatibel OpenAI (lihat [Menambah provider sendiri](#menambah-provider-sendiri-ryuu_providers)). |
+| `NVIDIA_API_KEY` | — | Kunci provider `nvidia`. Tidak pernah dicatat atau di-commit. |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Model bawaan provider `nvidia`. (note: faster) |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base URL provider `nvidia` (kompatibel OpenAI). |
+| `TOKENHARBOR_API_KEY` | — | Kunci provider `tokenharbor`. Tidak pernah dicatat atau di-commit. |
+| `TOKENHARBOR_BASE_URL` | `https://tokenharbor.ai/v1` | Base URL provider `tokenharbor`. |
+| `TOKENHARBOR_MODEL` | `deepseek-v4.1-flash:free` | Model bawaan provider `tokenharbor`. |
 | `AGENT_WORKSPACE` | `.` | Direktori yang boleh disentuh agent. Diresolusi dan diperiksa realpath-nya. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |
 | `AGENT_MAX_STEPS` | `0` | Batas langkah agent opsional (0 = tanpa batas, 1–100000). |
@@ -647,7 +717,11 @@ src/
     context.js          pemadatan konteks dengan batas
     planner.js          prompt sesi, task brief, ekstraksi rencana, ringkasan
     worklog.js          fakta sesi terverifikasi yang dipakai ulang antar langkah dan tugas
-  providers/nvidia.js   klien SDK OpenAI, normalisasi, retry, pemetaan galat
+  providers/
+    catalog.js          katalog provider + model, kapabilitas, validasi id, RYUU_PROVIDERS
+    registry.js         registry provider dinamis (factory per id)
+    index.js            pembuatan provider aktif dan resolusi pilihan provider/model
+    nvidia.js           klien SDK OpenAI (dipakai semua provider), normalisasi, retry, pemetaan galat
   tools/
     registry.js         allowlist, skema, risiko, antarmuka plugin
     filesystem.js       baca/tulis/edit/pindah/hapus/diff file
@@ -767,29 +841,43 @@ npm pack --dry-run
 
 ## Pemecahan masalah
 
-### `NVIDIA_API_KEY is not set`
+### `NVIDIA_API_KEY is not set` / `TOKENHARBOR_API_KEY is not set`
 
-Buat `.env` dari `.env.example`, atau ekspor variasinya. Variabel environment
-mendahului `.env`. Jalankan `npm run doctor`.
+Pesan itu menyebut variabel milik provider aktif. Buat `.env` dari `.env.example`
+atau ekspor variasinya; variabel environment mendahului `.env`. Jalankan
+`npm run doctor` untuk melihat provider mana yang aktif dan variabel mana yang
+belum terisi. Provider tanpa kunci tidak bisa dipilih lewat `/provider`.
 
 ### 401 / 403
 
 `401` berarti kunci hilang, tidak valid, atau sudah dicabut. `403` biasanya
-berarti kunci tidak punya akses ke model terpilih. Verifikasi kunci dan akses
-model di <https://build.nvidia.com/>, lalu jalankan
-`npm run doctor -- --live`.
+berarti kunci tidak punya akses ke model terpilih. Periksa nama variabel yang
+disebut pesan galat (`NVIDIA_API_KEY` atau `TOKENHARBOR_API_KEY`), verifikasi
+akses model di dashboard provider, lalu jalankan `npm run doctor -- --live`.
+Ryuu tidak mencoba kunci provider lain sebagai pengganti.
 
 ### 404
 
-Periksa `NVIDIA_MODEL` dan `NVIDIA_BASE_URL`. Base URL harus berupa root yang
+Periksa model provider aktif (`--model`, `/model`, atau `NVIDIA_MODEL` /
+`TOKENHARBOR_MODEL`) dan base URL-nya (`NVIDIA_BASE_URL` /
+`TOKENHARBOR_BASE_URL` / `RYUU_BASE_URL`). Base URL harus berupa root yang
 kompatibel dengan OpenAI, biasanya berakhiran `/v1`.
+
+### Model tidak tersedia / tidak ditemukan
+
+Daftar model adalah id yang ditawarkan CLI, bukan jaminan model itu aktif di
+server. Untuk Token Harbor, model `deepseek-v4.1-flash:free` bisa berubah atau
+dibatasi ketersediaannya. Cek `/provider` dan `/model`, lalu coba model lain atau
+hubungi provider. Ryuu menolak id dengan karakter tidak valid sebelum mengirim
+apa pun, tetapi tidak melakukan pemeriksaan ketersediaan ke server.
 
 ### 429 / batas laju
 
-Endpoint NVIDIA gratis punya kuota sisi-provider dan tidak dijamin tanpa batas.
-Tunggu lalu coba lagi, perkecil ukuran konteks/tugas, atau pindah model. Ryuu
-mencoba ulang kegagalan sesaat `429`/`5xx`/jaringan dengan backoff eksponensial
-terbatas beserta jitter, serta menghormati `Retry-After` bila ada.
+Kuota dan batas laju ditentukan provider dan tidak dijamin tanpa batas (termasuk
+untuk model bertanda `:free`). Tunggu lalu coba lagi, perkecil ukuran
+konteks/tugas, atau pindah model/provider. Ryuu mencoba ulang kegagalan sesaat
+`429`/`5xx`/jaringan dengan backoff eksponensial terbatas beserta jitter, serta
+menghormati `Retry-After` bila ada.
 
 ### Model bawaan sangat lambat atau habis waktu
 
@@ -924,7 +1012,17 @@ secara manual di Windows.
   sedang habis waktu di sisi provider saat itu. Jalankan ulang
   `npm run doctor -- --live` untuk kunci dan region Anda.
 - Perilaku model, ukuran konteks, kuota gratis, batas laju, dan dukungan tool
-  calling bergantung pada provider/model dan bisa berubah.
+  calling bergantung pada provider/model dan bisa berubah. Kapabilitas provider
+  (`streaming`, `tools`, `reasoning`) hanya dipakai untuk memutuskan apa yang
+  dikirim; reasoning tetap hanya ditampilkan bila provider mengirimnya.
+- Daftar model di katalog hanyalah id yang ditawarkan CLI. Ryuu tidak memeriksa
+  ketersediaan model ke server, dan tidak melakukan fallback otomatis ke
+  provider AI lain saat provider aktif gagal — itu mencegah kunci/data berpindah
+  tanpa keputusan Anda, tetapi berarti Anda harus memilih provider lain dengan
+  `/provider` atau `--provider`.
+- Token Harbor menyediakan model `deepseek-v4.1-flash:free`; Ryuu tidak menjamin
+  layanan itu gratis tanpa batas. Kuota, ketersediaan, dan harga mengikuti
+  ketentuan Token Harbor.
 - Respons dialirkan dan dikumpulkan sisi-klien: reasoning muncul langsung di
   kotaknya dan jawaban akhir dicetak langsung saat tiba (tanpa kotak, tanpa
   render ulang). Mode plain/non-TTY menyembunyikan aliran langsung dan hanya
@@ -960,7 +1058,7 @@ secara manual di Windows.
 - `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
   JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
   penyederhanaan dari halaman tersebut.
-- Ini project 0.2.0: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+- Ini project 0.2.1: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
 
 ## Daftar periksa validasi API langsung
 
@@ -969,18 +1067,22 @@ Dengan kunci asli yang dikonfigurasi:
 1. `npm run doctor` → semua pemeriksaan non-konektivitas lolos, kunci tidak
    dicetak.
 2. `npm run doctor -- --live` → `provider.connectivity` lolos dan melaporkan
-   latensi. Jika model bawaan habis waktu, konfirmasi dengan
+   latensi untuk provider aktif. Jika model bawaan habis waktu, konfirmasi dengan
    `--model z-ai/glm-5.3` sebelum menganggap kunci buruk (lihat bagian
    pemecahan masalah latensi).
-3. `npm link && ryuu` → banner menampilkan model, provider, workspace, versi
-   Node.
-4. Tanya: `List the files in this project and summarize what it does.` → amati
+3. Token Harbor (dengan `TOKENHARBOR_API_KEY`): `npm run doctor -- --provider
+   tokenharbor --live` → `provider.catalog` menandai `tokenharbor*` dan
+   konektivitas lolos bila endpoint-nya dapat dijangkau. Bila provider tidak
+   dapat dijangkau, itu dilaporkan sebagai kegagalan, bukan dianggap berhasil.
+4. `npm link && ryuu` → banner menampilkan model, provider, workspace, versi
+   Node. `/provider` menampilkan status kunci tanpa nilainya.
+5. Tanya: `List the files in this project and summarize what it does.` → amati
    pemanggilan `list_files`/`read_file` sungguhan dan ringkasan akhir.
-5. Tanya: `Add a comment to the top of <file> and show me the diff.` → setujui
+6. Tanya: `Add a comment to the top of <file> and show me the diff.` → setujui
    diff → konfirmasi file berubah dan ringkasannya menyebutkannya.
-6. Tanya: `Run npm test and report the result.` → setujui command persisnya →
+7. Tanya: `Run npm test and report the result.` → setujui command persisnya →
    verifikasi exit code asli, durasi, dan outputnya.
-7. `/undo` bekerja untuk perubahan file; `/status`, `/diff`, `/sessions`,
+8. `/undo` bekerja untuk perubahan file; `/status`, `/diff`, `/sessions`,
    `/logs` memperlihatkan bukti.
 
 ## Lisensi

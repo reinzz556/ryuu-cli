@@ -3,21 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigError } from '../utils/errors.js';
 
-export const DEFAULT_MODEL = 'nvidia/nemotron-3.5-super-vl-120b-a12b'; // note: faster
-export const DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-
-/**
- * Numbered model catalog for `/model <n>`. Index 1 is the default model; the
- * full list is shown by `/model` with no arguments so long ids never have to
- * be typed by hand.
- */
-export const MODEL_CATALOG = [
-  'nvidia/nemotron-3.5-super-vl-120b-a12b', // default, note: faster
-  'z-ai/glm-5.3-flash',
-  'google/diffusiongemma-26b-a4b-it',
-  'poolside/laguna-xs-2.1',
-  'stepfun-ai/step-5-preview',
-];
+// The provider/model catalog lives with the providers; re-exported here so the
+// existing import sites (and the documented env defaults) keep one location.
+export { DEFAULT_BASE_URL, DEFAULT_MODEL, MODEL_CATALOG } from '../providers/catalog.js';
 
 /** `.env` shipped next to the installed CLI (fallback for global runs). */
 export const PACKAGE_ENV_FILE = path.resolve(
@@ -69,9 +57,14 @@ const intOrRaw = (value) => (value === undefined ? undefined : value);
 /** Build a raw, unvalidated config object from an environment map. */
 export function buildRawConfig(env = process.env, { cwd = process.cwd() } = {}) {
   return {
-    apiKey: env.NVIDIA_API_KEY,
-    model: env.NVIDIA_MODEL || DEFAULT_MODEL,
-    baseURL: env.NVIDIA_BASE_URL || DEFAULT_BASE_URL,
+    // RYUU_* are provider-agnostic overrides. A provider's own key/model/base
+    // URL (NVIDIA_*, TOKENHARBOR_*, …) is resolved by the provider catalog.
+    apiKey: env.RYUU_API_KEY,
+    model: env.RYUU_MODEL,
+    baseURL: env.RYUU_BASE_URL,
+    provider: env.RYUU_PROVIDER,
+    extraProviders: env.RYUU_PROVIDERS,
+    providerEnv: env,
     workspace: env.AGENT_WORKSPACE || '.',
     logLevel: env.LOG_LEVEL || 'info',
     maxSteps: intOrRaw(env.AGENT_MAX_STEPS),

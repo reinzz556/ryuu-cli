@@ -1,6 +1,6 @@
 {
   "name": "ryuu-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Ryuu Agent CLI - an autonomous, approval-gated AI coding agent for your terminal",
   "type": "module",
   "bin": {

@@ -7,6 +7,49 @@ Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
 _(Belum ada apa pun.)_
 
+## [0.2.1] - 2026-10-25
+
+### Ditambahkan
+
+- **Dukungan multi-provider AI dengan registry dinamis.** Provider dan model kini
+  dideklarasikan di `src/providers/catalog.js` (`nvidia` dan `tokenharbor` bawaan,
+  plus entri `RYUU_PROVIDERS` dari `.env`), sehingga agent core tidak menyebut
+  provider mana pun. `ProviderRegistry` (`src/providers/registry.js`) membuat
+  instance per provider dari satu factory, dan `src/providers/index.js` meresolusi
+  pilihan, memvalidasi id/kunci/model, serta menyediakan `updateSelection()` untuk
+  berpindah provider tanpa membangun ulang agent.
+- **Provider Token Harbor** (`tokenharbor`) dengan model bawaan
+  `deepseek-v4.1-flash:free` (DeepSeek V4.1 Flash Free), base URL
+  `https://tokenharbor.ai/v1`, kunci `TOKENHARBOR_API_KEY`, dan override
+  `TOKENHARBOR_BASE_URL` / `TOKENHARBOR_MODEL`. Protokolnya Chat Completions yang
+  kompatibel OpenAI, jadi klien SDK yang sama dipakai ulang; streaming, tool
+  calling, reasoning yang dikirim provider, serta pemetaan galat HTTP tetap sama.
+- **Pemilihan provider dan model.** Flag `--provider <id>`, variabel
+  `RYUU_PROVIDER`/`RYUU_MODEL`, dan slash command `/provider [id]` (daftar status
+  kunci tanpa membocorkan nilainya). `/model`, `/addmodel`, dan `/delmodel` kini
+  bekerja per provider dan disimpan per provider di `.ryuu/preferences.json`;
+  berpindah provider mempertahankan riwayat percakapan dan worklog.
+- **Kapabilitas per provider** (`streaming`, `tools`, `reasoning`, `multimodal`)
+  menggantikan asumsi bahwa semua endpoint identik. Agent hanya mengirim tools
+  atau meminta stream bila provider mengumumkannya, dan menampilkan keterbatasan
+  yang diumumkan di banner. Tidak ada fallback otomatis ke provider AI lain.
+- **Validasi sebelum request**: provider harus dikenal, kuncinya harus ada (tidak
+  pernah memakai kunci kosong/hardcoded), dan id model harus valid. Model yang
+  tidak ada di daftar tetap diizinkan dengan peringatan, karena daftar itu adalah
+  id yang ditawarkan CLI, bukan jaminan ketersediaan di server.
+- Uji offline untuk katalog, pemilihan provider/model, request Token Harbor
+  (base URL, model, header otorisasi, streaming, tool call), kunci yang hilang,
+  galat HTTP/timeout, preferensi per provider, dan redaksi kunci.
+
+### Diubah
+
+- Pesan galat provider tidak lagi menyebut NVIDIA secara hard-coded: nama provider
+  dan variabel kunci yang benar dipakai, sehingga `401`/`403`/`404`/`429`/`5xx`
+  untuk Token Harbor menunjuk `TOKENHARBOR_API_KEY` dan model yang dipilih.
+- `.env.example` dan README mendokumentasikan Token Harbor, `RYUU_PROVIDER`,
+  `RYUU_MODEL`, `RYUU_PROVIDERS`, kapabilitas per provider, dan batasan kuota
+  (tidak ada klaim gratis tanpa batas).
+
 ## [0.2.0] - 2026-10-25
 
 ### Ditambahkan

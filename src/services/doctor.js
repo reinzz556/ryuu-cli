@@ -29,9 +29,26 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
     add('runtime', FAIL, error.message);
   }
 
-  add('config', config.apiKey ? PASS : FAIL, config.apiKey ? 'NVIDIA_API_KEY is set (value hidden)' : 'NVIDIA_API_KEY is missing');
-  add('provider.endpoint', PASS, `${config.baseURL} (OpenAI-compatible chat.completions)`);
+  const apiKeyEnv = config.apiKeyEnv || 'NVIDIA_API_KEY';
+  const providerName = config.providerName || 'NVIDIA Integrate API';
+  const providerId = config.providerId || 'nvidia';
+  add(
+    'config',
+    config.apiKey ? PASS : FAIL,
+    config.apiKey ? `${apiKeyEnv} is set (value hidden)` : `${apiKeyEnv} is missing`,
+  );
+  add('provider.endpoint', PASS, `${providerName} (${providerId}) at ${config.baseURL} (OpenAI-compatible chat.completions)`);
   add('provider.model', config.apiKey ? PASS : WARN, config.model);
+  const providerRows = Array.isArray(config.providers) ? config.providers : [];
+  add(
+    'provider.catalog',
+    providerRows.length > 0 ? PASS : FAIL,
+    providerRows.length > 0
+      ? providerRows
+          .map((provider) => `${provider.id}${provider.id === providerId ? '*' : ''}: ${provider.apiKey ? 'key set' : `no key (${provider.apiKeyEnv})`}`)
+          .join(' · ')
+      : 'no providers configured',
+  );
   add(
     'web_search',
     config.webSearchApiKey ? PASS : SKIP,
@@ -72,7 +89,7 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
   }
 
   if (!config.apiKey) {
-    add('provider.connectivity', SKIP, 'Skipped: no API key. Set NVIDIA_API_KEY, then run /doctor live.');
+    add('provider.connectivity', SKIP, `Skipped: no API key. Set ${apiKeyEnv}, then run /doctor live.`);
   } else if (!live) {
     add('provider.connectivity', SKIP, 'Offline check only. Run /doctor live (or `ryuu --doctor --live`) for one small API call.');
   } else if (!provider) {
@@ -80,7 +97,7 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
   } else {
     const result = await provider.ping();
     if (result.ok) {
-      add('provider.connectivity', PASS, `${result.model} responded in ${result.latencyMs}ms`);
+      add('provider.connectivity', PASS, `${providerName} · ${result.model} responded in ${result.latencyMs}ms`);
     } else {
       add('provider.connectivity', FAIL, redact(`${result.error.code}: ${result.error.message}`));
     }

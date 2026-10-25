@@ -160,6 +160,15 @@ export class Agent {
   }
 
   /**
+   * Point the loop at another provider (used by /provider). The conversation
+   * memory and worklog stay untouched, so a switch never loses context.
+   */
+  setProvider(provider) {
+    if (!provider) throw new Error('Agent requires a provider.');
+    this.provider = provider;
+  }
+
+  /**
    * Replace the remembered turns (used by /resume to restore a saved session).
    * A saved worklog can be restored with it so the agent resumes with the same
    * verified facts instead of re-reading every file.
@@ -282,11 +291,15 @@ export class Agent {
     for (;;) {
       if (signal?.aborted) throw new CancelledError('Task cancelled by user.');
       try {
+        // Capabilities are declared per provider; never assume every endpoint
+        // supports tools or streaming, and never claim reasoning we did not get.
+        const capabilities = this.provider.capabilities || null;
+        const tools = capabilities?.tools === false ? [] : this.registry.toOpenAITools();
         const response = await this.provider.chat({
           messages,
-          tools: this.registry.toOpenAITools(),
+          tools,
           signal,
-          stream: true,
+          stream: capabilities?.streaming !== false,
           onReasoning,
           onContent,
           onFirstToken,

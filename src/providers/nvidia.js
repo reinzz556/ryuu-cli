@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { CancelledError, ProviderError, isRecoverableError } from '../utils/errors.js';
 import { redact } from '../utils/redaction.js';
 import { toToolArgumentsString } from '../utils/validation.js';
+import { MODEL_ID_PATTERN, MAX_MODEL_ID_LENGTH } from './catalog.js';
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8000;
@@ -83,7 +84,12 @@ function retryAfterMs(error) {
 }
 
 /** Map raw SDK/network failures onto actionable ProviderError instances. */
-export function mapProviderError(error, { model } = {}) {
+export function mapProviderError(error, {
+  model,
+  providerName = 'NVIDIA',
+  apiKeyEnv = 'NVIDIA_API_KEY',
+  docsUrl = null,
+} = {}) {
   if (error instanceof ProviderError) return error;
   if (error instanceof CancelledError) return error;
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') return new CancelledError('Request cancelled.');
@@ -96,9 +102,10 @@ export function mapProviderError(error, { model } = {}) {
   const networkCode = findCauseCode(error, NETWORK_CODES);
   const lower = message.toLowerCase();
   const modelLabel = model ? `"${model}"` : 'the configured model';
+  const where = docsUrl ? ` Verify access on ${docsUrl}.` : '';
 
   if (errorName === 'APIConnectionTimeoutError' || timeoutCode || /timed? ?out/.test(lower)) {
-    return new ProviderError(`The NVIDIA request timed out. ${message}`, {
+    return new ProviderError(`The ${providerName} request timed out. ${message}`, {
       code: 'PROVIDER_TIMEOUT',
       retryable: true,
       status,
@@ -108,36 +115,36 @@ export function mapProviderError(error, { model } = {}) {
   if (errorName === 'APIConnectionError' || networkCode) {
     const detail = causeDetail(error);
     return new ProviderError(
-      `Cannot reach the NVIDIA API (${networkCode || 'connection error'}). ${message}${detail ? ` ${detail}` : ''}`,
+      `Cannot reach the ${providerName} API (${networkCode || 'connection error'}). ${message}${detail ? ` ${detail}` : ''}`,
       { code: 'PROVIDER_NETWORK', retryable: true, status, cause: error },
     );
   }
   if (status === 401) {
     return new ProviderError(
-      'NVIDIA API authentication failed (401). The key is invalid, revoked, or not loaded. Check NVIDIA_API_KEY and run /doctor.',
+      `${providerName} API authentication failed (401). The key is invalid, revoked, or not loaded. Check ${apiKeyEnv} and run /doctor.`,
       { code: 'AUTH_INVALID', status },
     );
   }
   if (status === 403) {
     return new ProviderError(
-      `NVIDIA API returned 403 Forbidden. Your key may not have access to ${modelLabel} or the endpoint. Verify model access on build.nvidia.com. ${message}`,
+      `${providerName} API returned 403 Forbidden. Your key may not have access to ${modelLabel} or the endpoint.${where} ${message}`,
       { code: 'AUTH_FORBIDDEN', status },
     );
   }
   if (status === 404) {
     return new ProviderError(
-      `NVIDIA API returned 404. ${modelLabel} or the endpoint path may be wrong. Check NVIDIA_MODEL and NVIDIA_BASE_URL (expected .../v1). ${message}`,
+      `${providerName} API returned 404. ${modelLabel} or the endpoint path may be wrong. Check the model id and base URL (expected .../v1). ${message}`,
       { code: 'MODEL_NOT_FOUND', status },
     );
   }
   if (status === 429) {
     return new ProviderError(
-      `NVIDIA API rate limit reached (429). Free endpoints have provider-side quotas; wait and retry, or reduce request size. ${message}`,
+      `${providerName} API rate limit reached (429). Provider-side quotas may apply; wait and retry, or reduce request size. ${message}`,
       { code: 'RATE_LIMIT', status, retryable: true },
     );
   }
   if (status !== null && status >= 500) {
-    return new ProviderError(`NVIDIA API server error (${status}). This is usually transient. ${message}`, {
+    return new ProviderError(`${providerName} API server error (${status}). This is usually transient. ${message}`, {
       code: 'SERVER_ERROR',
       status,
       retryable: true,
@@ -165,7 +172,7 @@ export function mapProviderError(error, { model } = {}) {
         { code: 'TOOLS_UNSUPPORTED', status },
       );
     }
-    return new ProviderError(`NVIDIA API rejected the request (${status}). ${message}`, { code: 'BAD_REQUEST', status });
+    return new ProviderError(`${providerName} API rejected the request (${status}). ${message}`, { code: 'BAD_REQUEST', status });
   }
   return new ProviderError(`Provider request failed: ${message}`, { code: 'PROVIDER_ERROR', status, retryable: false, cause: error });
 }
@@ -295,22 +302,90 @@ export function finalizeStream(acc, { durationMs = null } = {}) {
   };
 }
 
+/**
+ * Client for any OpenAI-compatible Chat Completions endpoint.
+ *
+ * The class name is historical (NVIDIA was the first provider); every provider
+ * in the catalog uses it with its own descriptor. `providerName` and
+ * `apiKeyEnv` only affect user-facing error text — credentials are never
+ * printed, and a provider is never called without its own key.
+ */
 export class NvidiaProvider {
   constructor(config, { client = null, logger = null, fetchImpl = null, sleepImpl = null } = {}) {
+    if (!config?.apiKey) {
+      throw new ProviderError(
+        `${config?.apiKeyEnv || 'NVIDIA_API_KEY'} is not set for provider ${config?.providerId || 'nvidia'}. Configure that variable in .env before using this provider.`,
+        { code: 'AUTH_MISSING' },
+      );
+    }
     this.config = config;
     this.logger = logger;
     this.sleep = sleepImpl || abortableSleep;
-    this.client = client || new OpenAI({
-      apiKey: config.apiKey || 'missing',
-      baseURL: config.baseURL,
-      timeout: config.requestTimeoutMs,
+    this.fetchImpl = fetchImpl;
+    // An injected client is used verbatim (tests); otherwise the SDK client is
+    // rebuilt whenever the selection changes.
+    this.externalClient = Boolean(client);
+    this.client = client || this.#createClient();
+  }
+
+  #createClient() {
+    return new OpenAI({
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseURL,
+      timeout: this.config.requestTimeoutMs,
       maxRetries: 0,
-      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
     });
   }
 
   get model() {
     return this.config.model;
+  }
+
+  /** Declared provider capabilities; unknown means "assume the usual". */
+  get capabilities() {
+    return this.config.capabilities || null;
+  }
+
+  get providerId() {
+    return this.config.providerId || null;
+  }
+
+  get providerName() {
+    return this.config.providerName || 'NVIDIA';
+  }
+
+  get apiKeyEnv() {
+    return this.config.apiKeyEnv || 'NVIDIA_API_KEY';
+  }
+
+  /**
+   * Repoint this provider at another provider or model without rebuilding the
+   * agent (conversation memory and the worklog stay intact).
+   */
+  updateSelection({ providerId, providerName, apiKeyEnv, docsUrl = null, baseURL, apiKey, model, capabilities = null } = {}) {
+    if (!apiKey) {
+      throw new ProviderError(
+        `${apiKeyEnv || 'the API key variable'} is not set for provider ${providerId || 'unknown'}. Configure it in .env before switching.`,
+        { code: 'AUTH_MISSING' },
+      );
+    }
+    if (model && (!MODEL_ID_PATTERN.test(model) || model.length > MAX_MODEL_ID_LENGTH)) {
+      throw new ProviderError(`Invalid model id: ${JSON.stringify(model)}`, { code: 'INVALID_MODEL' });
+    }
+    // Mutate in place: the app shares this object as its effective config.
+    Object.assign(this.config, {
+      providerId: providerId || this.config.providerId,
+      providerName: providerName || this.config.providerName,
+      apiKeyEnv: apiKeyEnv || this.config.apiKeyEnv,
+      docsUrl,
+      baseURL: baseURL || this.config.baseURL,
+      apiKey,
+      model: model || this.config.model,
+      capabilities: capabilities || this.config.capabilities || null,
+    });
+    if (!this.externalClient) this.client = this.#createClient();
+    return this;
   }
 
   /**
@@ -332,6 +407,22 @@ export class NvidiaProvider {
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new ProviderError('Cannot call the provider without messages.', { code: 'BAD_REQUEST' });
     }
+    // Validate the selection before any bytes leave the machine.
+    const selectedModel = String(this.config.model || '');
+    if (!selectedModel || !MODEL_ID_PATTERN.test(selectedModel) || selectedModel.length > MAX_MODEL_ID_LENGTH) {
+      throw new ProviderError(
+        `Invalid model id for provider ${this.config.providerId || 'unknown'}: ${JSON.stringify(this.config.model)}. Pick one with /model (or set the provider's model variable).`,
+        { code: 'INVALID_MODEL' },
+      );
+    }
+    const capabilities = this.config.capabilities || null;
+    const supportsTools = capabilities?.tools !== false;
+    const streaming = Boolean(stream) && capabilities?.streaming !== false;
+    if (tools.length > 0 && !supportsTools) {
+      this.logger?.warn('provider does not support tool calling; tools are not sent', {
+        provider: this.config.providerId,
+      });
+    }
     // Never let a broken tool-call payload reach the provider: one invalid
     // `function.arguments` string fails the whole request with a 400.
     const sanitized = sanitizeMessagesForRequest(messages);
@@ -339,12 +430,12 @@ export class NvidiaProvider {
       this.logger?.warn('repaired invalid tool-call arguments before sending', { count: sanitized.repaired });
     }
     const body = {
-      model: this.config.model,
+      model: selectedModel,
       messages: sanitized.messages,
       max_tokens: Math.max(64, Math.min(maxTokens ?? this.config.maxOutputTokens, 32768)),
-      stream: Boolean(stream),
+      stream: streaming,
     };
-    if (tools.length > 0) {
+    if (tools.length > 0 && supportsTools) {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
@@ -370,7 +461,7 @@ export class NvidiaProvider {
       };
       try {
         let normalized;
-        if (stream) {
+        if (streaming) {
           const request = {
             ...body,
             stream: true,
@@ -433,8 +524,9 @@ export class NvidiaProvider {
           normalized = normalizeResponse(response, { durationMs: Date.now() - startedAt });
         }
         this.logger?.debug('provider response', {
+          provider: this.config.providerId,
           model: normalized.model,
-          stream,
+          stream: streaming,
           toolCalls: normalized.toolCalls.length,
           reasoningChars: (normalized.reasoning || '').length,
           finishReason: normalized.finishReason,
@@ -455,7 +547,12 @@ export class NvidiaProvider {
             { code: 'STREAM_STALLED', retryable: !emitted },
           );
         }
-        const error = mapProviderError(raw, { model: this.config.model });
+        const error = mapProviderError(raw, {
+          model: this.config.model,
+          providerName: this.providerName,
+          apiKeyEnv: this.apiKeyEnv,
+          docsUrl: this.config.docsUrl || null,
+        });
         if (emitted) {
           // Retrying after partial output would duplicate reasoning/content.
           this.logger?.warn('provider stream interrupted', { code: error.code, attempt });

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { MODEL_CATALOG } from '../config/load.js';
+import { DEFAULT_PROVIDER_ID, modelsFor, normalizeModelId, providerById } from '../providers/catalog.js';
 import {
   MAX_CUSTOM_MODELS,
   addCustomModel,
@@ -52,7 +52,8 @@ const CLI_FLAGS = [
   ['--doctor', 'run offline diagnostics'],
   ['--doctor --live', 'diagnostics plus one real API request'],
   ['--workspace <path>', 'workspace override (AGENT_WORKSPACE)'],
-  ['--model <id>', 'model override (NVIDIA_MODEL)'],
+  ['--provider <id>', 'provider override (RYUU_PROVIDER), e.g. tokenharbor'],
+  ['--model <id>', 'model override for this run (RYUU_MODEL)'],
   ['--max-steps <n>', 'step cap; 0 = unlimited (default)'],
   ['--yes', 'auto-approve file writes; commands still ask'],
   ['--auto-approve', 'auto-approve ALL actions incl. commands; the agent works without asking'],
@@ -83,12 +84,29 @@ export function createCommands(state) {
 
   const stateDir = () => stateDirFor(config.workspace);
 
-  /** Built-in catalog plus the ids added with /addmodel, de-duplicated. */
+  /** Effective provider descriptors (built-in plus RYUU_PROVIDERS). */
+  const providerList = () => (Array.isArray(config.providers) ? config.providers : []);
+  const currentProviderId = () => config.providerId || DEFAULT_PROVIDER_ID;
+  const currentProvider = () => providerById(providerList(), currentProviderId()) || providerList()[0] || null;
+
+  /** Provider catalog models plus the ids added with /addmodel, de-duplicated. */
   const modelList = async () => {
-    const custom = await readCustomModels(stateDir());
-    const all = [...MODEL_CATALOG, ...custom.filter((id) => !MODEL_CATALOG.includes(id))];
-    return { custom, all };
+    const provider = currentProvider();
+    const custom = await readCustomModels(stateDir(), provider?.id || currentProviderId());
+    const entries = modelsFor(provider, custom);
+    return { custom, entries, all: entries.map((entry) => entry.id), provider };
   };
+
+  const modelLabel = (entry) => (entry.name && entry.name !== entry.id ? `  (${entry.name})` : '');
+  const capabilityText = (capabilities = {}) =>
+    [
+      capabilities.streaming === false ? null : 'streaming',
+      capabilities.tools === false ? null : 'tools',
+      capabilities.reasoning ? 'reasoning' : null,
+      capabilities.multimodal ? 'multimodal' : null,
+    ]
+      .filter(Boolean)
+      .join('+') || 'text only';
 
   define('help', 'Show commands or details for one command', '/help [command]', async (args) => {
     const target = args.trim().replace(/^\//, '');
@@ -179,12 +197,15 @@ export function createCommands(state) {
     );
   });
 
-  define('status', 'Show model, workspace, limits and the last task result', '/status', async () => {
+  define('status', 'Show provider, model, workspace, limits and the last task result', '/status', async () => {
     const last = state.getLastSummary();
     const running = processes.list({ includeCompleted: false }).filter((proc) => proc.status === 'running');
     const lines = [
       `model        ${config.model}`,
-      `provider     ${config.baseURL}`,
+      `provider     ${config.providerName || 'NVIDIA Integrate API'} (${currentProviderId()})`,
+      `endpoint     ${config.baseURL}`,
+      `key          ${config.apiKeyEnv || 'NVIDIA_API_KEY'} ${config.apiKey ? 'set (redacted)' : '(not set)'}`,
+      `caps         ${capabilityText(config.capabilities)}`,
       `workspace    ${workspace.root}`,
       `node         ${process.version} (${process.platform})`,
       `approval     ${config.approvalPolicy}`,
@@ -215,29 +236,97 @@ export function createCommands(state) {
 
   const MODEL_LIST_HINT =
     'Add an id with /addmodel <model-id>, remove one with /delmodel <model-id>.\n' +
-    'The CLI does not check whether a model exists on the server; a wrong id fails when used.';
+    'The CLI does not check whether a model exists on the server; a wrong id fails when used.\n' +
+    'Models are listed per provider: switch with /provider <id> first.';
+
+  define(
+    'provider',
+    'List AI providers and their key status, or switch provider',
+    '/provider [id]',
+    async (args) => {
+      const requested = args.trim().toLowerCase();
+      const list = providerList();
+      if (list.length === 0) {
+        return print('No providers are configured. This build has no provider catalog.');
+      }
+      if (!requested) {
+        const rows = list.map((entry) => {
+          const active = entry.id === currentProviderId();
+          const key = entry.apiKey ? 'key set (redacted)' : `no key (${entry.apiKeyEnv})`;
+          const models = `${entry.models?.length || 0} model(s) · default ${entry.defaultModel}`;
+          return `  ${entry.id.padEnd(12)} ${String(entry.name).padEnd(24)} ${key.padEnd(28)} ${models}${active ? '  \u2190 current' : ''}`;
+        });
+        return print(
+          [
+            'PROVIDERS',
+            ...rows,
+            '',
+            `Current provider: ${config.providerName || currentProviderId()} (${currentProviderId()}) · model ${config.model}`,
+            'A key is only ever shown as set/not set; values are never printed.',
+            'Usage: /provider <id>   (e.g. /provider tokenharbor)',
+            'Add a provider in .env with RYUU_PROVIDERS; add models with /addmodel.',
+          ].join('\n'),
+        );
+      }
+      if (typeof state.switchProvider !== 'function') {
+        return print('Provider switching is not available in this session.');
+      }
+      const known = providerById(list, requested);
+      if (!known) {
+        return print(
+          `Unknown provider: ${requested}. Known providers: ${list.map((entry) => entry.id).join(', ')}.`,
+        );
+      }
+      try {
+        const selection = await state.switchProvider(known.id);
+        print(
+          `Provider set to ${selection.providerName} (${selection.providerId}) · model ${selection.model}` +
+            (selection.persisted ? '; saved, so it stays selected in future runs.' : '.') +
+            ' Conversation history and the worklog were kept.',
+        );
+        for (const note of state.providerLimitations?.() || []) print(note);
+      } catch (error) {
+        print(`Cannot switch provider: ${error.message}`);
+      }
+    },
+    [
+      '  How to use:',
+      '    1. /provider                     list providers, keys and defaults',
+      '    2. /provider tokenharbor         switch for this and later runs',
+      '    3. /model                        list that provider\u2019s models',
+      '',
+      '  Notes:',
+      '    - A provider needs its own key: nvidia uses NVIDIA_API_KEY,',
+      '      tokenharbor uses TOKENHARBOR_API_KEY. Missing keys are reported by',
+      '      name, never by value.',
+      '    - Switching keeps conversation history and the worklog.',
+      '    - Register more providers in .env with RYUU_PROVIDERS (JSON).',
+    ].join('\n'),
+  );
 
   define(
     'model',
-    'List the model catalog, or switch model by number',
+    'List the current provider\u2019s models, or switch model by number',
     '/model [n]',
     async (args) => {
       const requested = args.trim();
-      const { custom, all } = await modelList();
+      const { custom, entries, all, provider: activeProvider } = await modelList();
       if (!requested) {
-        const rows = all.map(
-          (model, index) =>
-            `  ${index + 1}  ${model}${model === config.model ? '  \u2190 current' : ''}${custom.includes(model) ? '  (added)' : ''}`,
+        const rows = entries.map(
+          (entry, index) =>
+            `  ${index + 1}  ${entry.id}${modelLabel(entry)}${entry.id === config.model ? '  \u2190 current' : ''}${custom.includes(entry.id) ? '  (added)' : ''}`,
         );
+        const builtin = activeProvider?.models?.length || 0;
         return print(
           [
             `Current model: ${config.model}`,
+            `Provider: ${activeProvider?.name || currentProviderId()} (${activeProvider?.id || currentProviderId()}) · ${capabilityText(activeProvider?.capabilities || config.capabilities)}`,
             '',
             'Available models:',
             ...rows,
             '',
             `Usage: /model <n>   (e.g. /model ${Math.min(2, all.length)})`,
-            `${all.length} listed · ${MODEL_CATALOG.length} built-in · ${custom.length} added`,
+            `${all.length} listed · ${builtin} built-in · ${custom.length} added`,
             MODEL_LIST_HINT,
           ].join('\n'),
         );
@@ -254,7 +343,7 @@ export function createCommands(state) {
       const model = all[index];
       config.model = model;
       if (provider.config) provider.config.model = model;
-      const saved = await writeModelPreference(stateDir(), model);
+      const saved = await writeModelPreference(stateDir(), model, { providerId: currentProviderId() });
       print(
         `Model set to ${model} (#${index + 1}) for subsequent requests` +
           (saved ? '; saved, so it stays selected in future runs.' : '.') +
@@ -286,10 +375,11 @@ export function createCommands(state) {
           ].join('\n'),
         );
       }
-      if (MODEL_CATALOG.includes(name)) {
-        return print(`${name} is already a built-in catalog model. Run /model to see its number.`);
+      const activeProvider = currentProvider();
+      if ((activeProvider?.models || []).some((entry) => entry.id === name)) {
+        return print(`${name} is already a built-in catalog model for ${activeProvider.id}. Run /model to see its number.`);
       }
-      const result = await addCustomModel(stateDir(), name);
+      const result = await addCustomModel(stateDir(), name, currentProviderId());
       if (!result.ok) {
         if (result.reason === 'exists') {
           return print(`${name} is already in the model list. Run /model to see its number.`);
@@ -355,12 +445,13 @@ export function createCommands(state) {
           ].join('\n'),
         );
       }
-      if (MODEL_CATALOG.includes(name)) {
+      const activeProvider = currentProvider();
+      if ((activeProvider?.models || []).some((entry) => entry.id === name)) {
         return print(
-          `${name} is a built-in catalog model and cannot be removed. /delmodel only removes ids added with /addmodel.`,
+          `${name} is a built-in catalog model and cannot be removed (provider ${activeProvider.id}). /delmodel only removes ids added with /addmodel.`,
         );
       }
-      const result = await removeCustomModel(stateDir(), name);
+      const result = await removeCustomModel(stateDir(), name, currentProviderId());
       if (!result.ok) {
         if (result.reason === 'missing') {
           return print(
@@ -392,22 +483,31 @@ export function createCommands(state) {
     ].join('\n'),
   );
 
-  define('cmodel', 'Set a custom NVIDIA model name (user risk if the model does not exist)', '/cmodel <name> | /custommodel <name>', async (args) => {
+  define('cmodel', 'Set a custom model id for the current provider (user risk if it does not exist)', '/cmodel <name> | /custommodel <name>', async (args) => {
     const name = args.trim();
     if (!name) {
       return print(
         'Usage: /cmodel <name>  (alias: /custommodel <name>)\n' +
-          'Example: /cmodel nvidia/nemotron-3.5-super-vl-120b-a12b\n' +
-          'Peringatan: ketersediaan model di server NVIDIA adalah tanggung jawab user. Jika model tidak ada, gunakan /model untuk daftar model yang tersedia atau coba nama custom model lain.',
+          `Example: /cmodel ${currentProvider()?.defaultModel || 'deepseek-v4.1-flash:free'}\n` +
+          'Peringatan: ketersediaan model di server provider adalah tanggung jawab user. Jika model tidak ada, gunakan /model untuk daftar model yang tersedia atau coba nama custom model lain.',
+      );
+    }
+    if (!normalizeModelId(name)) {
+      return print(
+        [
+          `"${name}" is not a usable model id.`,
+          'Use letters, digits and . _ : / - (no spaces), e.g. deepseek-v4.1-flash:free.',
+          'Nothing was changed.',
+        ].join('\n'),
       );
     }
     config.model = name;
     if (provider.config) provider.config.model = name;
-    const saved = await writeModelPreference(stateDirFor(config.workspace), name);
+    const saved = await writeModelPreference(stateDirFor(config.workspace), name, { providerId: currentProviderId() });
     print(
-      `Custom model set to ${name} for subsequent requests` +
+      `Custom model set to ${name} for ${config.providerName || currentProviderId()} for subsequent requests` +
         (saved ? '; saved, so it stays selected in future runs.' : '.') +
-        ' Jika model ini tidak tersedia di server NVIDIA, permintaan akan gagal — gunakan /model untuk model yang tersedia atau coba nama custom model lain.',
+        ' Jika model ini tidak tersedia di server provider, permintaan akan gagal — gunakan /model untuk model yang tersedia atau coba nama custom model lain.',
     );
   });
 

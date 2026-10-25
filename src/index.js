@@ -8,8 +8,8 @@ import { validateConfig } from './config/validate.js';
 import { ConfigError, formatErrorBlock } from './utils/errors.js';
 import { createApp } from './cli/app.js';
 import { formatDoctor, runDoctor } from './services/doctor.js';
-import { createProvider } from './providers/nvidia.js';
-import { applyPersistedModel, stateDirFor } from './services/preferences.js';
+import { createActiveProvider } from './providers/index.js';
+import { applyPersistedModel, applyPersistedProvider, stateDirFor } from './services/preferences.js';
 import { createLogger } from './services/logger.js';
 import { Workspace } from './services/workspace.js';
 import { readVersion } from './utils/version.js';
@@ -32,7 +32,8 @@ Options:
       --doctor              Run diagnostics (offline)
       --live                With --doctor: one real API request
       --workspace <path>    Workspace override (AGENT_WORKSPACE)
-      --model <id>          Model override (NVIDIA_MODEL)
+      --provider <id>       Provider override (RYUU_PROVIDER), e.g. tokenharbor
+      --model <id>          Model override for this run (RYUU_MODEL)
       --max-steps <n>       Optional step cap (0 = unlimited, default)
   -y, --yes                 Auto-approve file writes (commands still ask)
       --auto-approve        Auto-approve ALL actions incl. commands (AI works without asking)
@@ -51,7 +52,9 @@ Commands inside the CLI: /help, /status, /worklog, /files, /tree, /tools,
 A line starting with "!" runs a shell command yourself (same as /bash).
 While a task runs, slash commands still work; a new prompt waits until it ends.
 
-Documentation: README.md · Secrets: NVIDIA_API_KEY in .env (never commit it).
+Documentation: README.md · Secrets: provider keys in .env (never commit it).
+Providers: nvidia (NVIDIA_API_KEY), tokenharbor (TOKENHARBOR_API_KEY); list them
+with /provider, or add your own with RYUU_PROVIDERS in .env.
 `;
 
 /** Parse argv into options plus a positional task. */
@@ -89,6 +92,9 @@ export function parseArgs(argv) {
         break;
       case '--model':
         options.model = value();
+        break;
+      case '--provider':
+        options.provider = value();
         break;
       case '--max-steps':
         options.maxSteps = value();
@@ -142,6 +148,7 @@ async function readStdin() {
 
 function applyOverrides(raw, options) {
   if (options.workspace) raw.workspace = options.workspace;
+  if (options.provider) raw.provider = options.provider;
   if (options.model) raw.model = options.model;
   if (options.maxSteps !== undefined) raw.maxSteps = options.maxSteps;
   if (options.readOnly) raw.approvalPolicy = 'read-only';
@@ -192,12 +199,16 @@ export async function main(argv = process.argv.slice(2)) {
   let config;
   try {
     const raw = applyOverrides(buildRawConfig(process.env, { cwd: process.cwd() }), options);
-    // A model picked with /model is persisted under <workspace>/.ryuu and wins
-    // over NVIDIA_MODEL on later runs; an explicit --model flag still wins for
-    // a single run and never rewrites the saved choice.
+    // A provider/model picked with /provider and /model is persisted under
+    // <workspace>/.ryuu and wins over env defaults on later runs; explicit
+    // --provider/--model flags win for a single run and never rewrite the
+    // saved choice.
+    const stateDir = stateDirFor(raw.workspace);
+    await applyPersistedProvider(raw, { flagProvider: options.provider, stateDir });
     await applyPersistedModel(raw, {
       flagModel: options.model,
-      stateDir: stateDirFor(raw.workspace),
+      stateDir,
+      providerId: raw.provider || null,
     });
     const result = validateConfig(raw, { requireApiKey: !options.doctor, cwd: process.cwd() });
     config = result.config;
@@ -212,7 +223,7 @@ export async function main(argv = process.argv.slice(2)) {
     let workspace = null;
     try {
       workspace = new Workspace(config.workspace, { logger });
-      const provider = config.apiKey ? createProvider(config, { logger }) : null;
+      const provider = config.apiKey ? createActiveProvider(config, { logger }) : null;
       const report = await runDoctor({ config, workspace, provider, live: options.live, logger });
       process.stdout.write(`${formatDoctor(report)}\n`);
       return report.ok ? 0 : 1;

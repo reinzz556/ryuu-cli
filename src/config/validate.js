@@ -1,7 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError } from '../utils/errors.js';
-import { DEFAULT_BASE_URL, DEFAULT_MODEL } from './load.js';
+import {
+  DEFAULT_PROVIDER_ID,
+  MAX_MODEL_ID_LENGTH,
+  MODEL_ID_PATTERN,
+  buildProviders,
+  isCatalogModel,
+  parseExtraProviders,
+  providerById,
+  resolveProviderId,
+} from '../providers/catalog.js';
 
 const APPROVAL_POLICIES = ['ask', 'auto', 'read-only'];
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'];
@@ -36,7 +45,7 @@ const DEFAULT_WEB_SEARCH_ENDPOINT = 'https://google.serper.dev/search';
 const WEB_SEARCH_AUTH_HEADERS = ['X-API-KEY', 'Authorization'];
 const SEARCH_PLACEHOLDER_KEY = /^(your[_-]?(search|serper|websearch)[_-]?api[_-]?key|changeme|replace[_-]?me|<.*>)$/i;
 
-const PLACEHOLDER_KEY = /^(your[_-]?nvidia[_-]?api[_-]?key|changeme|replace[_-]?me|<.*>)$/i;
+const PLACEHOLDER_KEY = /^(your[_-]?.*api[_-]?key|changeme|replace[_-]?me|<.*>)$/i;
 
 function toInt(name, value, issues) {
   const [min, max, fallback] = LIMITS[name];
@@ -121,38 +130,89 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   const issues = [];
   const warnings = [];
 
-  const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
-  if (!apiKey) {
-    if (requireApiKey) {
-      issues.push(
-        'NVIDIA_API_KEY is not set. Copy .env.example to .env and add your NVIDIA key, or export NVIDIA_API_KEY in your shell.',
+  // ---- providers -------------------------------------------------------
+  // Built-in providers (nvidia, tokenharbor) plus any RYUU_PROVIDERS entries,
+  // each with its own base URL, key, model list and capabilities.
+  const providerEnv = raw.providerEnv && typeof raw.providerEnv === 'object' ? raw.providerEnv : {};
+  const extraProviders = parseExtraProviders(raw.extraProviders, issues);
+  const providers = buildProviders({ env: providerEnv, extras: extraProviders });
+
+  const explicitProvider = raw.provider ? String(raw.provider).trim().toLowerCase() : null;
+  const providerId = resolveProviderId({ explicit: explicitProvider, providers });
+  let activeProvider = providerById(providers, providerId);
+  if (!activeProvider) {
+    issues.push(
+      `RYUU_PROVIDER ${JSON.stringify(raw.provider)} is not a known provider (known: ${providers
+        .map((provider) => provider.id)
+        .join(', ')}).`,
+    );
+    activeProvider = providerById(providers, DEFAULT_PROVIDER_ID) || providers[0];
+  }
+
+  // Legacy/generic overrides describe the active provider only (an explicit
+  // --model/--base-url, or a caller building a config for tests). Per-provider
+  // env variables are already baked into the descriptors above.
+  const keyOverride = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
+  if (keyOverride) activeProvider.apiKey = keyOverride;
+  const baseUrlOverride = typeof raw.baseURL === 'string' ? raw.baseURL.trim() : '';
+  if (baseUrlOverride) activeProvider.baseURL = baseUrlOverride;
+
+  // Empty keys and obvious placeholders disable a provider instead of failing
+  // startup; only the active provider's key is required.
+  const placeholderProviders = new Set();
+  for (const provider of providers) {
+    if (!provider.apiKey) continue;
+    if (PLACEHOLDER_KEY.test(provider.apiKey)) {
+      placeholderProviders.add(provider.id);
+      provider.apiKey = '';
+      warnings.push(
+        `${provider.apiKeyEnv} looks like a placeholder; provider ${provider.id} stays unavailable until a real key is set.`,
       );
     }
-  } else if (PLACEHOLDER_KEY.test(apiKey)) {
+  }
+
+  const apiKey = activeProvider.apiKey;
+  const apiKeyEnv = activeProvider.apiKeyEnv;
+  if (!apiKey) {
     if (requireApiKey) {
-      issues.push('NVIDIA_API_KEY still contains the example placeholder. Replace it with a real key from https://build.nvidia.com/.');
-    } else {
-      warnings.push('NVIDIA_API_KEY looks like a placeholder; live API calls will fail.');
+      if (placeholderProviders.has(activeProvider.id)) {
+        issues.push(
+          `${apiKeyEnv} still contains the example placeholder. Replace it with a real ${activeProvider.name} key${activeProvider.docsUrl ? ` from ${activeProvider.docsUrl}` : ''}.`,
+        );
+      } else {
+        issues.push(
+          `${apiKeyEnv} is not set for provider ${activeProvider.id}. Copy .env.example to .env and add your ${activeProvider.name} key, or export ${apiKeyEnv} in your shell.`,
+        );
+      }
     }
-  } else if (!/^nvapi-[A-Za-z0-9._-]+$/.test(apiKey)) {
+  } else if (activeProvider.id === DEFAULT_PROVIDER_ID && !/^nvapi-[A-Za-z0-9._-]+$/.test(apiKey)) {
     warnings.push('NVIDIA_API_KEY does not look like a typical NVIDIA key (nvapi-...). Continuing in case you use a proxy or gateway.');
   }
 
-  const model = String(raw.model || DEFAULT_MODEL).trim();
-  if (!model) issues.push('NVIDIA_MODEL must not be empty');
-  else if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model)) {
-    issues.push(`NVIDIA_MODEL contains unsupported characters: ${JSON.stringify(model)}`);
+  const requestedModel = typeof raw.model === 'string' ? raw.model.trim() : '';
+  const model = requestedModel || activeProvider.defaultModel;
+  if (!model) {
+    issues.push(`No model is selected for provider ${activeProvider.id}. Set ${activeProvider.modelEnv || 'RYUU_MODEL'}.`);
+  } else if (!MODEL_ID_PATTERN.test(model) || model.length > MAX_MODEL_ID_LENGTH) {
+    issues.push(`Model id contains unsupported characters: ${JSON.stringify(model)}`);
+  } else if (!isCatalogModel(activeProvider, model)) {
+    warnings.push(
+      `Model ${JSON.stringify(model)} is not listed for provider ${activeProvider.id}. It is sent as-is and may fail; add it with /addmodel to keep it in the list.`,
+    );
   }
 
-  let baseURL = String(raw.baseURL || DEFAULT_BASE_URL).trim();
+  const baseUrlLabel = activeProvider.baseUrlEnv || `base URL for ${activeProvider.id}`;
+  let baseURL = String(activeProvider.baseURL || '').trim();
   try {
     const parsed = new URL(baseURL);
     if (!['http:', 'https:'].includes(parsed.protocol)) {
-      issues.push(`NVIDIA_BASE_URL must use http or https, received ${parsed.protocol}`);
+      issues.push(`${baseUrlLabel} must use http or https, received ${parsed.protocol}`);
+    } else if (parsed.protocol === 'http:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+      warnings.push(`${baseUrlLabel} is plain http (${parsed.host}); the API key travels unencrypted.`);
     }
     baseURL = parsed.toString().replace(/\/$/, '');
   } catch {
-    issues.push(`NVIDIA_BASE_URL is not a valid URL: ${JSON.stringify(baseURL)}`);
+    issues.push(`${baseUrlLabel} is not a valid URL: ${JSON.stringify(baseURL)}`);
   }
 
   let workspace = resolveDir(raw.workspace || '.', cwd, 'AGENT_WORKSPACE', issues) || path.resolve(cwd);
@@ -289,6 +349,14 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
 
   return {
     config: {
+      // Active provider selection (descriptors carry the per-provider keys so a
+      // runtime /provider switch needs no extra environment lookup).
+      providerId: activeProvider.id,
+      providerName: activeProvider.name,
+      provider: activeProvider.id,
+      providers,
+      apiKeyEnv,
+      capabilities: { ...activeProvider.capabilities },
       apiKey,
       model,
       baseURL,
@@ -310,11 +378,32 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
 
 /** Redacted config view for /config and /status. Never exposes the key. */
 export function describeConfig(config) {
+  const providers = Array.isArray(config.providers) ? config.providers : [];
+  const capabilityText = (capabilities = {}) =>
+    [
+      capabilities.streaming === false ? null : 'streaming',
+      capabilities.tools === false ? null : 'tools',
+      capabilities.reasoning ? 'reasoning' : null,
+      capabilities.multimodal ? 'multimodal' : null,
+    ]
+      .filter(Boolean)
+      .join('+') || 'text only';
   return {
-    provider: 'NVIDIA Integrate API (OpenAI-compatible)',
+    provider: `${config.providerName || 'NVIDIA Integrate API'} (${config.providerId || DEFAULT_PROVIDER_ID})`,
     baseURL: config.baseURL,
     model: config.model,
     apiKey: config.apiKey ? 'set (redacted)' : '(not set)',
+    apiKeyEnv: config.apiKeyEnv || 'NVIDIA_API_KEY',
+    capabilities: capabilityText(config.capabilities),
+    providers: providers.length
+      ? providers
+          .map((provider) =>
+            `${provider.id}${provider.id === (config.providerId || DEFAULT_PROVIDER_ID) ? '*' : ''}: ${
+              provider.apiKey ? 'key set' : `no key (${provider.apiKeyEnv})`
+            }`,
+          )
+          .join(' · ')
+      : 'unavailable',
     workspace: config.workspace,
     approvalPolicy: config.approvalPolicy,
     allowShell: config.allowShell,

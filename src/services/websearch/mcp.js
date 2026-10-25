@@ -43,7 +43,7 @@ export function safeChildEnv(extra = {}) {
     if (typeof process.env[key] === 'string') env[key] = process.env[key];
   }
   for (const [key, value] of Object.entries(extra || {})) {
-    if (/^(NVIDIA|OPENAI|ANTHROPIC|TAVILY|FIRECRAWL|YDC|YOU|SERPER|SEARCH)_/i.test(key)) continue;
+    if (/^(NVIDIA|TOKENHARBOR|RYUU|OPENAI|ANTHROPIC|TAVILY|FIRECRAWL|YDC|YOU|SERPER|SEARCH)_/i.test(key)) continue;
     if (typeof value === 'string') env[key] = value;
   }
   return env;
