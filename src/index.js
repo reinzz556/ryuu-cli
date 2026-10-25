@@ -47,8 +47,8 @@ Options:
 
 Commands inside the CLI: /help, /status, /worklog, /files, /tree, /tools,
 /processes, /logs, /expand, /cancel, /history, /sessions, /diff, /undo, /config,
-/doctor, /model, /addmodel, /delmodel, /cmodel, /custommodel, /workspace, /clear,
-/memory, /resume, /bash, /exit.
+/doctor, /provider, /model, /addmodel, /delmodel, /cmodel, /custommodel,
+/workspace, /clear, /memory, /resume, /bash, /exit.
 A line starting with "!" runs a shell command yourself (same as /bash).
 While a task runs, slash commands still work; a new prompt waits until it ends.
 
