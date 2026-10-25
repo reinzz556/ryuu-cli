@@ -1,0 +1,987 @@
+# Ryuu Agent CLI
+
+Agen coding AI otonom yang setiap aksi tulis/eksekusi harus disetujui dulu, untuk
+terminal Anda. Ryuu memeriksa workspace, menyusun rencana, memanggil tool,
+menunjukkan apa yang sedang dilakukannya, dan melaporkan apa yang berubah —
+didukung oleh NVIDIA Integrate API melalui antarmuka Chat Completions yang
+kompatibel dengan OpenAI.
+
+```
+  ╭─ ◢ RYUU // AGENT OS ──────────────────────────────────────────── v0.2.0 ─╮
+  │                                                                          │
+  │                   ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗                    │
+  │                   ██╔══██╗╚██╗ ██╔╝██║   ██╗██║   ██╗                    │
+  │                   ██████╔╝ ╚████╔╝ ██║   ██╗██║   ██╗                    │
+  │                   ██╔══██╗  ╚██╔╝  ██║   ██╝██║   ██╗                    │
+  │                   ██║  ██║   ██║   ╚██████╔╝╚██████╔╝                    │
+  │                   ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═════╝                     │
+  │                                                                          │
+  │                 autonomous coding intelligence · NVIDIA                  │
+  │                                                                          │
+  ├─ ◆ TELEMETRY ────────────────────────────────────────────────────────────┤
+  │ model      deepseek-ai/deepseek-v4.1-flash                               │
+  │ workspace  /path/to/your/project                                         │
+  │ runtime    Node.js v25.x · linux                                         │
+  │ access     ask · shell is not a sandbox                                  │
+  │ log        /path/to/your/project/.ryuu/logs/agent.log                    │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+  click a block or /expand N   !cmd shell   ⌃C cancel   /help commands   /exit quit
+```
+
+## Fitur
+
+- **Loop agent yang eksplisit** — model → tool call tervalidasi → persetujuan →
+  eksekusi nyata → hasil tool → model, sampai ada jawaban akhir, pembatalan, atau
+  batas durasi tugas. Jumlah langkah tidak dibatasi secara bawaan;
+  `AGENT_MAX_STEPS` menambahkan batas opsional.
+- **Tool workspace yang nyata** — list, tree, read, search, file info, diff,
+  create, edit, write, move, delete, inspeksi Git, dan ringkasan project.
+- **Manajer proses** — menjalankan command dengan stdout/stderr asli, exit code,
+  sinyal, durasi, timeout, buffer terbatas, server background, dan penghentian
+  yang bersih.
+- **Gerbang persetujuan (approval gate)** — setiap aksi tulis, eksekusi, dan
+  destruktif diperiksa sebelum dijalankan. Tool read-only tidak pernah meminta
+  konfirmasi. Aksi yang ditolak dilaporkan kembali ke model.
+- **HUD kaya telemetri** — banner gradien `RYUU // AGENT OS`, panel telemetri,
+  feed aktivitas, panel reasoning live, kartu persetujuan, dan dasbor ringkasan
+  run. Baris aktivitas yang selalu menyala melaporkan fase, waktu berjalan per
+  fase, **total waktu run, nomor langkah, tool mana yang sedang berjalan dan
+  berapa lagi mengantre (`writing edit_file src/x.js (2/5)`), jumlah token
+  prompt/completion live, dan latensi token pertama**.
+  Setiap pemanggilan model mencetak barisnya sendiri `◇ model 9.4s · 21.3k↑ 388↓ tok · first token 1.8s`,
+  command yang berjalan mengalirkan stdout/stderr ke wilayah live, setiap command
+  yang selesai mencetak kotak output `$ argv` bernomor (pratinjau lima baris;
+  klik bloknya, atau jalankan `/expand <id>`, untuk log utuh yang disimpan beserta
+  scrolling internal, dan `/logs <id>` sesudahnya), dan setiap perubahan file
+  mencetak baris `-`/`+` yang benar-benar berubah. Blok reasoning dinomori dengan
+  cara yang sama dan tetap bisa dibuka ulang selama sesi ini. Tempel panjang
+  (1000+ karakter) diringkas menjadi placeholder `> [Pasted text #N X chars]` di
+  composer, sementara model tetap menerima teks lengkapnya.
+- **Tanpa batas retry buatan** — koneksi provider yang putus atau giliran model
+  kosong akan dicoba ulang dengan heartbeat di layar dan backoff eksponensial
+  sampai model menjawab, tenggat tugas lewat, atau Anda membatalkan. Giliran
+  kosong tidak pernah mengakhiri tugas dengan galat; `AGENT_MAX_RECOVERY_ATTEMPTS`
+  tetap bisa memasang batas keras.
+- **Composer tetap bisa dipakai saat run** — prompt digambar di bawah wilayah
+  aktivitas live dan dicetak ulang di setiap baris yang dialirkan, jadi slash
+  command bisa diketik dan dijalankan sementara agent sedang berpikir,
+  menjalankan tool, atau mengalirkan jawabannya (`/status`, `/expand 4`,
+  `/model 2`, `/cancel`, …). Prompt tugas baru ditolak sampai run selesai,
+  sehingga dua run tidak bisa tumpang tindih.
+- **Session worklog** — fakta terverifikasi (file yang dibaca beserta rentang
+  barisnya, file yang diubah, command dan exit code, temuan, rencana) disimpan
+  sepanjang sesi dan diteruskan ke tugas berikutnya, sehingga tindak lanjut
+  melanjutkan pekerjaan alih-alih mengulang analisis. File yang sudah dibaca dan
+  tidak berubah di disk tidak dibaca lagi; agent diberi tahu bahwa isinya sudah
+  diketahui.
+- **Jawaban Markdown-native** — heading, bold/italic, inline code, link, list,
+  kutipan, code fence dengan penyorotan sintaks, dan tabel yang mengecil,
+  membungkus, atau berpindah ke tata letak vertikal agar sesuai lebar terminal.
+- **Perlindungan workspace** — penolakan escape path/symlink, pemblokiran file
+  rahasia, pengecualian direktori hasil-generate, batas ukuran, penulisan
+  atomik, dan deteksi penulisan basi.
+- **Memori lokal** — memori percakapan lintas tugas dalam satu sesi (lihat dengan
+  `/memory`, pulihkan yang tersimpan dengan `/resume <id>`), ID sesi dan
+  riwayat, transkrip yang disunting (redacted), cache ringkasan project,
+  pemadatan konteks, dan undo stack yang terbatas pada sesi.
+- **Mode gagal yang aman** — konfigurasi hilang, input tidak valid, galat
+  provider, batas laju, dan tool calling yang tidak didukung menghasilkan pesan
+  yang bisa ditindaklanjuti alih-alih stack trace (pakai `--debug` untuk stack).
+- **Mode layar penuh (`--tui`)** — antarmuka opsional bertipe retained-mode yang
+  menggambar ulang seluruh percakapan dari sebuah model, alih-alih menambahkan
+  baris ke scrollback: setiap reasoning, output `run_command`, dan jawaban punya
+  keadaan terbuka/tertutupnya sendiri, sehingga beberapa blok bisa dibuka
+  sekaligus dan yang lama tetap bisa dibuka sepanjang sesi. Composer adalah bagian
+  dari frame yang sama, dan transkrip menggul di dalam aplikasi
+  (`PgUp`/`PgDn`, roda mouse, klik untuk melipat/membuka) alih-alih sejarah milik
+  terminal. Blok dipisahkan baris kosong dan diberi warna (prosa putih, Markdown
+  dan tabel biru langit, nama tool kuning, reasoning hijau, kegagalan merah),
+  layar pembuka memakai banner ASCII yang sama dengan antarmuka baris, prompt
+  berupa gradien pink → blue `ryuu > `, dan setiap baris membungkus sesuai lebar
+  terminal. Tanpa flag ini tidak ada yang berubah.
+- **Shell Anda sendiri (`/bash`, `!cmd`)** — jalankan sendiri sebuah command di
+  workspace tanpa melibatkan model: output lengkap dicetak segera, dan command,
+  exit code, serta outputnya disimpan sebagai giliran pengguna di sesi, sehingga
+  tugas berikutnya tahu apa yang Anda jalankan dan apa yang terjadi.
+- **Mode plain** — dipakai otomatis ketika stdout bukan TTY, atau dengan
+  `--plain`.
+
+## Persyaratan
+
+| Persyaratan | Detail |
+| --- | --- |
+| Node.js | **25.x dianjurkan dan terverifikasi.** Minimum yang didukung: 22.x (versi mayor lebih tua tidak diuji). |
+| npm | 10+ (sudah menyertai Node 25). |
+| OS | Linux, macOS, atau Windows. Perilaku pensinyalan proses berbeda di Windows; lihat [Perilaku proses](#perilaku-proses). |
+| Jaringan | Dibutuhkan untuk panggilan model langsung. Git opsional dan hanya dipakai untuk `/diff` dan `inspect_git`. |
+| Kunci NVIDIA | Dibutuhkan untuk panggilan langsung: `NVIDIA_API_KEY`. |
+
+Instal Node 25 dengan [nvm](https://github.com/nvm-sh/nvm):
+
+```bash
+nvm install 25
+nvm use 25
+node --version    # v25.x
+```
+
+Di Windows, pakai nvm-windows atau installer resmi Node.js, lalu verifikasi dengan
+`node --version` di PowerShell.
+
+## Instalasi dan konfigurasi
+
+```bash
+# dari direktori project
+npm install
+
+# buat file environment lokal Anda
+cp .env.example .env      # macOS/Linux
+# Copy-Item .env.example .env    (Windows PowerShell)
+
+# edit .env dan isi dengan kunci asli
+chmod 600 .env            # opsional, dianjurkan di mesin bersama
+```
+
+`.env` dikecualikan oleh `.gitignore`. Kunci juga bisa diambil dari environment
+proses dan **variabel environment menang atas nilai `.env`**:
+
+```bash
+export NVIDIA_API_KEY="nvapi-..."
+```
+
+Ambil kunci di <https://build.nvidia.com/>. Jangan pernah meng-commit kunci asli,
+menempelkannya ke issue, atau memasukkannya ke log. CLI tidak pernah mencetak
+kunci: `/config` menampilkan `set (redacted)`, dan log/sesi sudah melewati proses
+penyingkatan (redaction).
+
+### Verifikasi instalasi
+
+```bash
+npm run doctor          # pemeriksaan offline, tanpa panggilan API
+npm run doctor -- --live  # satu permintaan nyata yang kecil (memakai kuota)
+```
+
+Hasil offline yang diharapkan dengan kunci valid: runtime, config, endpoint,
+workspace, direktori state, dan Git lolos; konektivitas berupa `SKIP` sampai Anda
+memakai `--live`.
+
+## Menjalankan
+
+```bash
+npm start                 # antarmuka terminal interaktif
+node src/index.js         # sama saja
+```
+
+Setelah `npm link`, binary `ryuu` bisa dipakai dari direktori mana pun (nama
+`ryuu` tetap dipertahankan sebagai alias):
+
+```bash
+npm link
+cd /path/to/another/project
+ryuu
+ryuu "Summarize this project"
+```
+
+Saat dijalankan di luar project ini, `ryuu` tetap memakai folder saat ini sebagai
+workspace dan memuat `<cwd>/.env` lebih dulu, lalu jatuh kembali ke `.env` di
+sebelah CLI yang terpasang untuk `NVIDIA_API_KEY` dan bawaannya lainnya.
+
+Di prompt interaktif, ketik tugas lalu tekan Enter sekali untuk mengirimnya. Untuk
+tugas beberapa baris, akhiri baris dengan `\` lalu teruskan; baris berikutnya tanpa
+`\` menyelesaikannya. Slash command (`/help`, `/model`, `/exit`, …) berjalan
+segera.
+Selama tugas berjalan, composer tetap aktif: slash command (beserta argumennya)
+dieksekusi segera, dan hanya prompt tugas baru yang ditolak dengan
+`A task is already running...` sampai run selesai atau dihentikan `/cancel`.
+Berpikir, reasoning, tool call, persetujuan, dan jawaban yang dialirkan tetap
+berjalan sementara output command dicetak di atas prompt.
+
+Menjalankan satu tugas tanpa REPL:
+
+```bash
+node src/index.js "List the files in src and summarize the architecture"
+node src/index.js "Fix the failing test in tests/util.test.js, then run npm test"
+echo "Explain the error in build.log" | node src/index.js
+```
+
+Sesi non-interaktif tidak punya prompt untuk persetujuan, jadi penulisan dan
+command **ditolak secara bawaan**. `--yes` menyetujui otomatis penulisan file
+(command tetap butuh persetujuan interaktif). Pakai `--auto-approve` untuk
+menyetujui otomatis **semua** aksi — termasuk command shell — agar agent bisa
+menyelesaikan pekerjaan tanpa pengawasan:
+
+```bash
+node src/index.js --auto-approve "Fix the failing test, then run npm test"
+```
+
+Eksekusi shell tetap bukan sandbox; hanya pakai `--auto-approve` pada tugas yang
+Anda percaya.
+
+### Opsi CLI
+
+| Opsi | Fungsi |
+| --- | --- |
+| `-h`, `--help` | Menampilkan penggunaan. |
+| `-v`, `--version` | Menampilkan versi. |
+| `--task "..."` | Tugas sekali jalan eksplisit (tugas posisional juga bisa). |
+| `--workspace <path>` | Override workspace (`AGENT_WORKSPACE`). |
+| `--model <id>` | Override model untuk run ini (`NVIDIA_MODEL`). |
+| `--max-steps <n>` | Batas langkah agent opsional (`0` = tanpa batas, bawaan). |
+| `-y`, `--yes` | Menyetujui otomatis penulisan file untuk sesi ini. |
+| `--read-only` | Menolak setiap aksi tulis, eksekusi, dan destruksi. |
+| `--doctor` | Diagnostik offline. |
+| `--live` | Bersama `--doctor`: satu permintaan konektivitas nyata. |
+| `--env-file <path>` | Memuat file env tertentu alih-alih `.env`. |
+| `--tui` | UI layar penuh retained-mode (butuh TTY interaktif; diabaikan dengan `--plain`). |
+| `--plain` | Output plain, tanpa spinner atau gaya ANSI. |
+| `--no-color` | Menonaktifkan warna. |
+| `--debug` | Log debug dan stack trace. |
+
+### UI layar penuh (`--tui`)
+
+```bash
+ryuu --tui
+```
+
+Antarmuka bawaan menambahkan baris ke scrollback terminal dan melupakan setiap
+barisnya. `--tui` justru menyimpan percakapan sebagai data: setiap item punya id
+stabil, tanda terbuka/tertutup, dan teks lengkap di memori, dan setiap frame
+digambar dari model tersebut. Di sinilah perilaku blok menjadi mungkin:
+
+| Aksi | Hasil |
+| --- | --- |
+| Klik sebuah prompt (`▸ TASK … ⧉ copy`) | Menyalin prompt itu ke clipboard terminal. |
+| Klik blok reasoning / `run_command` / shell | Menukar keadaan terbuka/tertutup di tempat; setiap blok menyimpan keadaan sendiri, sehingga beberapa bisa tetap terbuka. |
+| `PgUp`, `PgDn`, roda mouse | Menggul transkrip di dalam aplikasi (scrollback terminal sendiri tidak dipakai). |
+| `/expand <id>` | Membuka blok yang sudah tergulir keluar dari tampilan. `/expand` tanpa id mendaftarkannya. |
+| `Esc` | Melipat setiap blok yang terbuka, atau melompat kembali ke bawah. |
+| `Enter` | Mengirim baris; `↑`/`↓` memanggil riwayat, `←`/`→`, `Home`/`End` menyunting composer. |
+| `Ctrl+Y` | Menyalin prompt yang terakhir Anda kirim. `/copy [n]` menyalin yang lebih lama (`n` = berapa prompt ke belakang). |
+| `Ctrl+C` | Membatalkan tugas atau command shell yang berjalan; dua kali untuk keluar. |
+
+#### Tampilan dan rasa
+
+Setiap blok dibuka dengan header kecil (`▸ TASK`, `◆ response`, `⚙ Using tools`,
+`◈ reasoning`, `◆ PLAN`, `▸ run_command`) dan blok dipisahkan baris kosong
+serta garis pada gradien **pink → violet → biru langit**, sehingga perubahan jenis
+terlihat sekilas. Tool call berurutan berbagi satu blok dan satu header
+`⚙ Using tools` (dengan jumlah pemanggilan) tanpa pembatas di antaranya, karena
+keduanya aktivitas sejenis. Warna membawa jenis baris:
+
+| Baris | Warna |
+| --- | --- |
+| Header blok (`⚙ Using tools`, `◈ reasoning`, `◆ response`) | Gradien pink → blue (tool), putih tebal (response), glif hijau (reasoning) |
+| Jawaban assistant dan prosa biasa | Putih |
+| Heading, daftar, link, inline code, code fence, tabel Markdown | Biru langit |
+| Header tugas, rencana, prompt persetujuan | Violet / amber |
+| Isi reasoning (`◈ reasoning #N`) | Hijau, dengan baris status putih (`chars · live · partial`) |
+| Nama tool (`✓ read_file`, `▸ run_command #N`) | Kuning |
+| Nama tool yang gagal (`✕ run_command`) | Merah tebal, dengan outputnya merah-redup |
+| Baris command `$` dan header shell | Biru langit |
+| Galat runtime dan aksi yang ditolak | Merah / amber |
+| Input composer | Kelabu, dengan `ryuu` pada gradien pink → blue dan ` > ` sesudahnya |
+
+Pertanyaan (persetujuan, kelanjutan) dicetak di atas composer alih-alih
+menggantikan prompt. Status bar mewarnai setiap segmen secara terpisah (fase,
+langkah, tool, token, posisi gulir). Semuanya — telemetri banner, output command,
+diff, pemberitahuan, dan composer — membungkus sesuai lebar terminal alih-alih
+terpotong atau tergulir keluar dari tampilan. Palet naik ke truecolor ketika
+terminal mendukungnya (`--no-color` tetap mematikannya).
+
+Tombol salin (`⧉ copy` di setiap prompt, `Ctrl+Y`, atau `/copy [n]`) menulis teks
+dengan **OSC 52**, sehingga terminal itulah yang memiliki clipboard: tanpa proses
+anak `pbcopy`/`xclip`/`clip.exe`, dan bisa dipakai lewat SSH. Terminal yang tidak
+menerapkan OSC 52 mengabaikan sekuensnya; status bar tetap melaporkan apa yang
+dikirim beserta jumlah karakternya.
+
+Versi yang tampil di banner, header TUI, dan `--version` dibaca dari
+`package.json` saat runtime, sehingga sebuah rilis hanya perlu menaikkan file itu.
+
+Ia butuh TTY sungguhan. Dengan `--plain`, output yang dipipe, atau sesi
+non-interaktif, flag diabaikan dengan peringatan dan antarmuka baris normal
+dipakai.
+
+### Menjalankan shell Anda sendiri (`/bash`, `!cmd`)
+
+Baris yang dimulai dengan `!` adalah command shell, bukan prompt:
+
+```text
+!git status
+!npm test
+/bash npm test              # hal yang sama, ditulis panjang
+```
+
+Command berjalan di workspace dengan izin Anda sendiri (tanpa prompt
+persetujuan, tidak ada yang dikirim ke model), dan stdout/stderr yang tersimpan
+dicetak lengkap — pratinjau `run_command` memang untuk tool call milik model,
+bukan untuk shell Anda sendiri. Output yang sangat panjang menyimpan ekor
+hasil tangkapan dan menyatakan bahwa ia terpotong.
+
+Command, exit code, durasi, dan outputnya ditambahkan ke sesi sebagai giliran
+pengguna, sehingga tugas berikutnya sudah tahu apa yang Anda jalankan, apa yang
+dicataknya, dan apakah gagal. `/memory` menampilkan giliran itu; `/clear`
+membuangnya.
+
+`--read-only` menolak baris shell, dan `Ctrl+C` membatalkan command yang masih
+berjalan (seluruh grup proses disinyalkan, sehingga `npm test` tidak selamat
+darinya).
+
+## Di dalam CLI
+
+Apa pun yang tidak dimulai dengan `/` dikirim ke agent sebagai tugas; apa pun
+yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
+
+| Command | Keterangan | Catatan |
+| --- | --- | --- |
+| `/help [command]` | Mendaftarkan command atau menampilkan detail. | |
+| `/exit` | Keluar dan menghentikan proses anak. | Juga `Ctrl+C` dua kali. |
+| `/clear` | Melupakan memori percakapan agar tugas berikutnya mulai bersih. | Sesi tersimpan tidak disentuh. |
+| `/memory [clear]` | Menampilkan apa yang diingat agent antar-tugas. | Dibatasi `AGENT_MAX_CONTEXT_CHARS`. |
+| `/worklog` | Menampilkan fakta terverifikasi (file dibaca/diubah, command, temuan) yang akan dipakai agent alih-alih membaca ulang. | Dihapus oleh `/clear`. |
+| `/resume <session-id>` | Memulihkan memori percakapan sebuah sesi tersimpan. | Daftar id dengan `/history`. |
+| `/status` | Model, workspace, batas, jumlah proses/undo, tugas terakhir. | |
+| `/model [n]` | Mendaftarkan katalog model bernomor, atau berpindah model menurut nomor. | Disimpan di `.ryuu/preferences.json`; tetap ada setelah restart. `--model` menimpa per run. |
+| `/addmodel <model-id>` | Menambahkan id model ke daftar `/model`. | Disimpan di `.ryuu/preferences.json`. Id tidak diperiksa ke server: id salah akan gagal saat dipakai, dan itu risiko pengguna. |
+| `/delmodel <model-id>` | Membuang id yang ditambahkan lewat `/addmodel`. | Model bawaan katalog tidak bisa dibuang. Membuang model saat ini tetap menyimpannya untuk sesi ini. |
+| `/cmodel <name>` | Mengeset id model apa pun langsung, tanpa menambahkannya ke daftar. | Alias: `/custommodel`. Aturan tanpa-pemeriksaan sama seperti `/addmodel`. |
+| `/workspace` | Menampilkan satu workspace yang boleh disentuh sesi ini. | Berpindah di tengah sesi sengaja tidak didukung. |
+| `/files [path]` | Mendaftarkan sebuah direktori. | File rahasia/direktori hasil-generate disembunyikan. |
+| `/tree [path]` | Pohon direktori dengan batas. | |
+| `/tools` | Tool terdaftar, risiko, kebutuhan persetujuan. | |
+| `/copy [n]` | Menyalin prompt yang sudah Anda kirim ke clipboard terminal. | `n` menghitung mundur dari yang terbaru (bawaan: yang terakhir). Bekerja di kedua antarmuka; memakai OSC 52. |
+| `/bash <command>` | Menjalankan sendiri command shell di workspace. | Output lengkap; command dan output masuk ke konteks sesi. Sama dengan baris yang dimulai `!`. |
+| `/web [status\|providers\|test\|enable <id>\|disable <id>]` | Status pencarian web multi-provider, daftar kapabilitas, uji koneksi, dan aktif/nonaktif sesi. | `test` hanya memeriksa koneksi dan penemuan tool; tidak menjalankan kueri pencarian. |
+| `/processes` | Proses yang berjalan dan terbaru. | |
+| `/logs [id]` | Output proses, atau lokasi file log. | |
+| `/expand [block-id]` | Mendaftarkan blok reasoning/`run_command`, atau membuka satu secara penuh. | Bisa juga dengan mengklik blok; `Esc` atau klik lain menutup panel. Blok tetap tersedia sepanjang sesi. |
+| `/cancel [process-id]` | Membatalkan tugas aktif atau menghentikan proses. | Bekerja saat tugas berjalan; command tetap tersedia sepanjang waktu. |
+| `/history` | Sesi tersimpan terbaru. | Disunting (redacted), lokal saja. |
+| `/sessions [list\|show <id>\|delete <id>\|clear]` | Mengelola riwayat sesi. | `clear` meminta konfirmasi di mode interaktif. |
+| `/diff` | Diff perubahan agent, atau `git diff` sebagai cadangan. | |
+| `/undo [confirm]` | Mengembalikan perubahan file terakhir oleh agent. | Lihat [Undo](#undo). |
+| `/config` | Konfigurasi efektif, kunci disunting. | |
+| `/doctor [live]` | Diagnostik; `live` membuat satu permintaan API. | |
+
+### Daftar model (`/model`, `/addmodel`, `/delmodel`)
+
+`/model` menampilkan daftar bernomor berisi katalog bawaan plus setiap id yang
+Anda tambahkan. Id yang ditambahkan ditandai `(added)`, dan yang sedang aktif
+ditandai `← current`.
+
+```text
+/model                              # tampilkan daftarnya
+/addmodel meta-llama/llama-3.3-70b-instruct
+/model 7                            # berpindah ke entri 7
+/delmodel meta-llama/llama-3.3-70b-instruct
+```
+
+- Daftar dan model terpilih disimpan bersama di `.ryuu/preferences.json` milik
+  workspace saat ini, sehingga keduanya tetap ada setelah restart. `/addmodel`
+  tidak pernah melupakan model terpilih, dan `/model <n>` tidak pernah melupakan
+  id yang ditambahkan.
+- Hanya format id yang divalidasi (huruf, angka, `. _ : / -`, sampai 200 karakter,
+  maksimal 100 id tambahan). Ketersediaan, kuota, ukuran konteks, dan dukungan
+  tool calling **tidak** diperiksa. Salah ketik diterima dan hanya gagal saat
+  model itu dipakai — itu tanggung jawab pengguna.
+- Entri katalog bawaan tidak bisa dihapus, dan id yang sudah ada tidak
+  ditambahkan dua kali.
+- `/cmodel <name>` memilih id untuk sesi ini tanpa menambahkannya ke daftar;
+  `/help addmodel` dan `/help delmodel` menampilkan tutorial yang sama di dalam
+  CLI.
+
+## Tool yang tersedia untuk model
+
+Model hanya bisa memanggil tool yang terdaftar di allowlist lokal. Setiap
+pemanggilan divalidasi skemanya sebelum dieksekusi.
+
+| Tool | Risiko | Persetujuan | Tujuan |
+| --- | --- | --- | --- |
+| `list_files` | read | tidak | Daftar direktori terfilter dan berpaginasi. |
+| `tree` | read | tidak | Pohon direktori dengan batas. |
+| `read_file` | read | tidak | Teks UTF-8; rentang baris yang diminta dialirkan, jadi juga bekerja untuk file di atas batas baca. |
+| `file_info` | read | tidak | Ukuran, jenis, timestamp, jumlah baris. |
+| `search_files` | read | tidak | Pencarian nama/isi dengan pengecualian. |
+| `diff_file` | read | tidak | Diff terpadu tanpa menulis apa pun. |
+| `inspect_git` | read | tidak | Status/diff Git bila tersedia. |
+| `project_summary` | read | tidak | Manifes dan struktur dari file sungguhan. |
+| `web_search` | read | tidak | Hasil web dari provider MCP/REST terkonfigurasi, dengan fallback otomatis. Terdaftar ketika setidaknya satu provider tersedia (You.com dan Firecrawl bisa dipakai tanpa kunci). |
+| `read_url` | read | tidak | Mengambil halaman http(s) publik dan mengekstrak teks yang bisa dibaca. Selalu tersedia. |
+| `create_file` | tulis | ya | File baru; menimpa file lama hanya dengan `overwrite`. |
+| `write_file` | tulis | ya | Penulisan seluruh file dengan penjaga mtime opsional. |
+| `edit_file` | tulis | ya | Penggantian terarah unik, mengembalikan diff. |
+| `move_file` | destruktif | ya | Memindah/mengganti nama di dalam workspace. |
+| `delete_file` | destruktif | ya | Menghapus file atau direktori kosong; `confirm: true` wajib. |
+| `run_command` | exec | ya | Menjalankan argv, menunggu, menangkap output/exit/durasi. |
+| `start_process` | exec | ya | Server/watcher di background. |
+| `list_processes` | read | tidak | Daftar proses. |
+| `get_process_output` | read | tidak | Output terbatas untuk sebuah proses. |
+| `stop_process` | exec | ya | Penghentian bersih, lalu pemutusan paksa. |
+
+Katalog tool juga ditulis ke dalam system prompt (nama, argumen, gerbang
+persetujuan, tujuan satu baris), bersama skrip npm milik project itu sendiri dan
+tata letak modulnya, sehingga model memilih tool yang benar alih-alih keluar ke
+`grep` untuk sesuatu yang sudah dikerjakan `search_files`.
+
+### Pencarian web (MCP multi-provider dengan fallback)
+
+`web_search` tetap satu tool bagi model, tetapi didukung oleh `WebSearchManager`
+yang memiliki beberapa provider dan mencobanya sesuai urutan yang bisa
+dikonfigurasi. Setiap provider dinormalkan ke bentuk yang sama: `results`
+(`title`, `url`, `snippet`, `date` opsional), `answer_box`, `people_also_ask`,
+dan `related_searches`. `depth: \"deep\"` meminta dua kali lipat hasil (maksimal
+10).
+
+| Provider | Transport | Kunci | Kapabilitas | Catatan |
+| --- | --- | --- | --- | --- |
+| You.com MCP | Streamable HTTP | opsional (`YDC_API_KEY`) | pencarian (tanpa kunci); ekstraksi/konten dengan kunci | Tanpa kunci memakai `?profile=free`; penemuan langsung mengembalikan `you-search`, `you-discover`. |
+| Firecrawl MCP | Streamable HTTP | opsional (`FIRECRAWL_API_KEY`) | pencarian + scrape | Tingkat tanpa kunci punya batas kredit harian; penemuan langsung mengembalikan `firecrawl_search`, `firecrawl_scrape`, `firecrawl_parse`. |
+| DuckDuckGo MCP | stdio | tidak ada | pencarian + ekstrak (sebagaimana diumumkan server) | Server komunitas opsional (`uvx free-search-mcp`, MIT). **Nonaktif secara bawaan** karena menjalankan kode pihak ketiga; butuh `uv` terpasang. |
+| Tavily MCP | Streamable HTTP | wajib (`TAVILY_API_KEY`) | pencarian + ekstrak | Endpoint remote butuh kunci; tanpa itu provider dilewati, tidak pernah dihubungi. |
+| Serper REST | HTTPS | wajib (`SEARCH_API_KEY`) | pencarian | Backend asli; ikut dalam rantai fallback yang sama. |
+
+Bagaimana ia berperilaku:
+
+- **Koneksi malas.** Tidak ada yang menghubungkan pada saat start. Sebuah
+  provider dihubungkan saat pertama dipakai, tool-nya ditemukan dengan
+  `tools/list`, dan koneksinya dipakai ulang selama sisa sesi. `/web test`
+  hanya melakukan handshake + penemuan (tanpa kueri).
+- **Pemetaan tool, bukan nama yang di-hard-code.** Tool pencarian/ekstraksi
+  dipilih menurut nama, deskripsi, dan skema input, sehingga sebuah server bisa
+  mengganti nama tool-nya tanpa membuat agent rusak. Argumen wajib diisi dari
+  skema tool itu sendiri (`query`, `q`, `url`, `urls`, `limit`, `formats`,
+  `objective`).
+- **Fallback hanya untuk kegagalan sungguhan.** Timeout, jaringan/DNS, HTTP
+  401/403/429/5xx, kegagalan handshake/penemuan, tool yang hilang, skema salah,
+  dan payload tidak valid semuanya pindah ke provider berikutnya. Hasil kosong
+  yang valid dicatat dan boleh juga mencoba provider berikutnya, tetapi tidak
+  dilaporkan sebagai kegagalan. Pembatalan tidak pernah memicu fallback.
+- **Retry terbatas.** Maksimal `WEB_MCP_MAX_RETRIES` retry per provider untuk
+  kegagalan *pemanggilan* sesaat (bukan handshake), dengan backoff eksponensial
+  dan jitter. `429` langsung diteruskan ke provider berikutnya alih-alih
+  membekukan agent. Dua kegagalan berturut-turut membuka circuit breaker 60
+  detik untuk provider itu.
+- **Satu kegagalan bertipe.** Jika semua provider gagal, tool melempar
+  `SEARCH_ALL_PROVIDERS_FAILED` (atau `SEARCH_EXTRACT_FAILED`) dengan daftar
+  alasan singkat per provider; agent tetap berjalan tanpa pencarian web alih-alih
+  crash dan diberi tahu untuk tidak mengarang hasil.
+- **Terminal menampilkan fallback**, bukan hanya pemenangnya: satu pohon `WEB
+  SEARCH` ringkas per pencarian dengan `✓`/`✕`/`!`/`○`, durasi, dan alasan
+  singkat. Stack trace tetap di log debug; kunci dan header otorisasi tidak
+  pernah dicetak.
+- **Fallback ekstraksi halaman.** `read_url` tetap mengambil secara lokal lebih
+  dulu. Jika pengambilan lokal gagal (jaringan, timeout, 401/403, jenis tidak
+  didukung) atau tidak mengekstrak teks dari halaman yang dirender JavaScript,
+  sebuah provider berkemampuan ekstraksi (Firecrawl/Tavily) dicoba dan hasilnya
+  menyebutkan provider mana yang menghasilkan teksnya.
+- **Keamanan.** Kueri dan URL keluar dari mesin; file tidak. Teks halaman adalah
+  data tak terpercaya, bukan instruksi. Server MCP stdio mendapat environment
+  minimal (PATH/HOME/TMP), bukan kunci NVIDIA atau pencarian Anda. Server MCP
+  tidak pernah diberi akses filesystem atau shell oleh agent ini.
+- **Privasi dan kuota.** Firecrawl tanpa kunci punya batas kredit harian yang
+  kecil; manajer tidak pernah menguji dengan kueri sungguhan saat start. `/web
+  test` secara eksplisit menyatakan tidak ada kueri yang dijalankan. Nonaktifkan
+  semuanya dengan `WEB_SEARCH_ENABLED=false` atau
+  `WEB_SEARCH_PROVIDERS=none`.
+- **Worklog:** setiap pencarian dicatat (`web_search \"...\" -> N result(s) ·
+  top: ...`), sehingga tugas lanjutan memakai temuan yang ada alih-alih membayar
+  kueri yang sama.
+
+### Membaca sebuah halaman (`read_url`)
+
+`read_url` mengambil satu URL http(s) dan mengembalikan teks hasil ekstraksi,
+judul, dan meta deskripsinya, sehingga model bisa memverifikasi snippet
+pencarian terhadap halaman sumbernya.
+
+- **Selalu tersedia.** Tidak butuh kunci, ia tool read-only, dan tidak pernah
+  meminta konfirmasi.
+- **Terbatas.** Batas badan 2 MB, `max_chars` 1.000–50.000 (bawaan 20.000),
+  timeout 15 detik, dan maksimal 5 redirect.
+- **Skema diperiksa.** Hanya http/https; URL dengan kredensial tertanam ditolak,
+  setiap hop redirect diperiksa ulang, dan penurunan https→http ditolak.
+- **Dijaga SSRF.** Alamat loopback, privat, link-local, CGNAT, multicast, dan
+  metadata cloud ditolak, begitu pula `localhost`, `*.local`, `*.internal`, dan
+  hostname ber-label tunggal. Pengambilan sungguhan melakukan resolusi DNS lebih
+  dulu dan menolak bila ada alamat privat; setiap redirect diperiksa ulang. DNS
+  rebinding dikendalikan tetapi tidak dihilangkan sepenuhnya tanpa agen HTTP
+  ber-IP-pinned.
+- **Teks saja.** `text/*`, HTML/XHTML, JSON, dan XML dibaca; gambar, PDF, dan
+  biner lain mengembalikan `READ_URL_UNSUPPORTED`.
+- **Fallback ekstraksi MCP.** Jika pengambilan lokal tidak bisa membaca halaman
+  (galat jaringan, timeout, konten terblokir/tidak didukung) atau tidak
+  mengekstrak teks dari halaman yang dirender JavaScript, sebuah provider
+  pencarian web berkemampuan ekstraksi dicoba; hasilnya menyebutkan provider di
+  `provider` dan menetapkan `extraction: \"mcp\"`.
+- **Tidak ada JavaScript secara lokal.** Halaman yang dirender sisi-klien bisa
+  saja tidak mengembalikan teks; hasilnya menyatakan hal itu alih-alih
+  berpura-pura halaman itu kosong, dan fallback MCP di atas bisa memulihkannya.
+- **Konten tak terpercaya.** Prompt memperlakukan teks yang diambil sebagai
+  data, bukan instruksi, sehingga sebuah halaman tidak bisa mengalihkan
+  perilaku agent.
+- **Privasi:** URL diminta dari mesin Anda, jadi situs itu melihat IP Anda.
+- **Worklog:** setiap pengambilan dicatat (`read_url <url> -> HTTP 200 · N chars`).
+
+### Model prompt dan konteks
+
+Protokol provider ini tidak punya keadaan (stateless): setiap permintaan
+membawa seluruh percakapan. Ryuu membuat hal itu stabil dan murah alih-alih
+berpura-pura sebaliknya.
+
+- System prompt dirakit **sekali per sesi** dan dipakai ulang byte-per-byte. Ia
+  identik pada setiap langkah (sehingga prefix caching provider bisa kena) dan
+  tidak pernah tumbuh seiring berjalannya tugas.
+- Setiap tugas menambahkan tepat satu pesan `TASK BRIEF`: tugas, sisa batas
+  langkah dan waktu, serta worklog sesi. Itulah satu-satunya blok instruksi
+  per-tugas; model tidak pernah diberi tahu ulang untuk \"mulai dengan rencana\".
+- Hasil tool tetap berada di percakapan selama langkah-langkah yang
+  membutuhkannya. Worklog membawa fakta terverifikasi (file yang dibaca beserta
+  rentang baris, file yang diubah, command dan exit code, temuan, rencana) ke
+  tugas-tugas berikutnya, sehingga tindak lanjut melanjutkan pekerjaan alih-alih
+  memulai lagi. File yang sudah dibaca dan tidak berubah di disk tidak dibaca
+  lagi: agent menerima balasan `cached: true` yang memberi tahu bahwa isinya
+  sudah diketahui.
+- `finish_reason: \"length\"` ditangani: pemanggilan tool yang terpotong pada
+  batas token output dibuang dan dilaporkan, tidak pernah dieksekusi sebagai
+  file yang tertulis setengah jalan.
+- Pada 70% anggaran waktu, model diberi tahu untuk menyatu (konvergen), dan
+  aliran respons yang tidak mengirim byte selama
+  `AGENT_STREAM_IDLE_TIMEOUT_MS` dibatalkan dengan `STREAM_STALLED` alih-alih
+  menahan langkah tetap terbuka.
+
+## Model persetujuan dan izin
+
+Kebijakannya diatur dengan `AGENT_APPROVAL_POLICY`:
+
+| Risiko | `ask` (bawaan) | `auto` | `read-only` |
+| --- | --- | --- | --- |
+| read | izinkan | izinkan | izinkan |
+| tulis | prompt | izinkan | tolak |
+| exec | prompt | prompt | tolak |
+| destruktif | prompt | prompt | tolak |
+
+- `--yes` menyetujui otomatis **hanya penulisan**; eksekusi dan aksi destruktif
+  tetap memakai prompt.
+- Di sesi non-interaktif tidak ada prompt, jadi aksi yang butuh persetujuan
+  ditolak dan penolakannya dilaporkan ke model.
+- Persetujuan ditegakkan di loop agent, bukan di dalam tool masing-masing,
+  sehingga model tidak bisa melewatinya dengan memanggil tool secara langsung.
+- Prompt persetujuan menampilkan tool, tingkat risiko, argumen, dan pratinjau
+  (diff atau command beserta direktori kerjanya) sebelum Anda menjawab.
+- Penilaian risiko adalah sinyal UX best-effort, **bukan batas keamanan**.
+
+### Undo
+
+`/undo` memakai snapshot before/after yang tepat, direkam oleh proses agent ini
+untuk `create_file`, `write_file`, `edit_file`, `move_file`, dan `delete_file`. Ia
+menolak mengembalikan perubahan jika file berubah setelah suntingan agent,
+alih-alih menimpa pekerjaan Anda. Cakupannya mencakup perubahan yang dibuat pada
+tugas/sesi saat ini dan bukan pengganti kontrol versi. Pakai `git` untuk sejarah
+yang tahan lama.
+
+## Referensi konfigurasi
+
+Semua pengaturan berasal dari variabel environment (atau `.env`). Nilai bawaan
+divalidasi saat start; nilai tidak valid membuat proses gagal sebelum ada
+panggilan API.
+
+| Variabel | Bawaan | Makna |
+| --- | --- | --- |
+| `NVIDIA_API_KEY` | — (wajib) | Kunci API. Tidak pernah dicatat atau di-commit. |
+| `NVIDIA_MODEL` | `deepseek-ai/deepseek-v4.1-flash` | ID model. |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base URL kompatibel OpenAI. |
+| `AGENT_WORKSPACE` | `.` | Direktori yang boleh disentuh agent. Diresolusi dan diperiksa realpath-nya. |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |
+| `AGENT_MAX_STEPS` | `0` | Batas langkah agent opsional (0 = tanpa batas, 1–100000). |
+| `AGENT_APPROVAL_POLICY` | `ask` | `ask`, `auto`, `read-only`. |
+| `AGENT_MAX_OUTPUT_TOKENS` | `4096` | Batas token output (64–32768). Nilai tinggi bisa ditolak atau mahal. |
+| `AGENT_REQUEST_TIMEOUT_MS` | `120000` | Timeout per permintaan (1s–10menit). |
+| `AGENT_STREAM_IDLE_TIMEOUT_MS` | `45000` | Membatalkan aliran respons yang tidak mengirim byte selama ini (0 menonaktifkan). |
+| `AGENT_MAX_RETRIES` | `3` | Retry untuk kegagalan sesaat (0–10). |
+| `AGENT_MAX_RECOVERY_ATTEMPTS` | `0` | Percobaan sambung ulang saat tautan provider putus. `0` = tanpa batas (coba sampai tenggat tugas atau `/cancel`); 1–1000 membatasinya. |
+| `AGENT_RECOVERY_BACKOFF_MS` | `1000` | Jeda dasar antar-percobaan sambung ulang (100ms–60s). |
+| `AGENT_MAX_FILE_BYTES` | `262144` | Batas baca per file (1KB–5MB). |
+| `AGENT_MAX_SEARCH_RESULTS` | `50` | Batas hasil pencarian (1–500). |
+| `AGENT_MAX_TOOL_OUTPUT_BYTES` | `32768` | Batas hasil tool yang dikirim balik ke model. |
+| `AGENT_MAX_TASK_DURATION_MS` | `900000` | Batas waktu nyata tugas (10s–24jam). |
+| `AGENT_MAX_CONTEXT_CHARS` | `120000` | Ambang pemadatan konteks lokal. |
+| `WEB_SEARCH_ENABLED` | `true` | Mendaftarkan `web_search` sama sekali. `false` membuangnya bersama fallback ekstraksi `read_url`. |
+| `WEB_SEARCH_FALLBACK` | `true` | Mencoba provider berikutnya setelah kegagalan. `false` berhenti pada kandidat pertama. |
+| `WEB_SEARCH_PROVIDERS` | `serper` (bila ada kunci) → `you` → `firecrawl` → `duckduckgo` → `tavily` | Urutan provider; `none` menonaktifkan semuanya. |
+| `WEB_SEARCH_DISABLED` | — | Daftar id provider yang dilewati, dipisah koma. `/web enable`/`disable` hanya mengubah sesi saat ini. |
+| `WEB_MCP_TIMEOUT_MS` | `6000` | Timeout handshake, penemuan, dan pemanggilan per percobaan (1s–30s). |
+| `WEB_MCP_MAX_RETRIES` | `1` | Retry per provider untuk kegagalan pemanggilan sesaat (0–5). |
+| `WEB_MCP_DEBUG` | `false` | Diagnostik provider tambahan di log (tanpa kunci). |
+| `YDC_API_KEY` | — | Kunci You.com opsional; tanpa kunci memakai profil pencarian gratis. |
+| `FIRECRAWL_API_KEY` | — | Kunci Firecrawl opsional; tanpa kunci memakai tingkat kredit gratis. |
+| `TAVILY_API_KEY` | — | Wajib untuk Tavily; tanpa itu Tavily dilewati. |
+| `DUCKDUCKGO_MCP_ENABLED` | `false` | Menjalankan server stdio `uvx free-search-mcp` lokal saat pertama dipakai. |
+| `DUCKDUCKGO_MCP_COMMAND` / `DUCKDUCKGO_MCP_ARGS` | `uvx` / `free-search-mcp` | Command untuk provider stdio lokal. |
+| `SEARCH_API_KEY` | — | Kunci Serper-kompatibel; menambahkan Serper ke rantai fallback. |
+| `WEB_SEARCH_ENDPOINT` | `https://google.serper.dev/search` | Endpoint SERP (`http`/`https`). |
+| `WEB_SEARCH_AUTH_HEADER` | `X-API-KEY` | `X-API-KEY` atau `Authorization` (Bearer). |
+| `WEB_SEARCH_RESULTS` | `5` | Hasil per kueri (1–10); `deep` menggandakan sampai batas. |
+| `WEB_SEARCH_TIMEOUT_MS` | `15000` | Timeout permintaan Serper (1s–60s). |
+| `AGENT_ALLOW_SHELL` | `false` | Mengizinkan sintaks shell mentah (tetap bergerbang persetujuan). |
+| `AGENT_HISTORY_DIR` | `<workspace>/.ryuu/sessions` | Penyimpanan sesi. |
+| `AGENT_LOG_DIR` | `<workspace>/.ryuu/logs` | Penyimpanan log (`agent.log`, dirotasi pada 5MB). |
+
+State lokal (`.ryuu/`) di-gitignore dan dikecualikan dari operasi file agent.
+
+## Arsitektur
+
+```
+src/
+  index.js              Entri CLI, penguraian argumen, validasi start
+  cli/
+    app.js              menghubungkan UI, agent, tool, provider, proses, storage
+    commands.js         slash command
+    renderer.js         banner, feed aktivitas, baris telemetri, diff, ringkasan
+    tui.js              layar retained-mode --tui: model transkrip, tata letak, input
+    markdown.js         Markdown terminal, tabel sadar-lebar, blok kode
+    prompts.js          sesi prompt readline dan penanganan Ctrl+C
+  agent/
+    agent.js            loop pemanggilan-tool eksplisit dan ringkasan bukti
+    approvals.js        penegakan kebijakan persetujuan
+    context.js          pemadatan konteks dengan batas
+    planner.js          prompt sesi, task brief, ekstraksi rencana, ringkasan
+    worklog.js          fakta sesi terverifikasi yang dipakai ulang antar langkah dan tugas
+  providers/nvidia.js   klien SDK OpenAI, normalisasi, retry, pemetaan galat
+  tools/
+    registry.js         allowlist, skema, risiko, antarmuka plugin
+    filesystem.js       baca/tulis/edit/pindah/hapus/diff file
+    search.js           pencarian nama dan isi
+    git.js              inspeksi git read-only
+    project.js          ringkasan manifes/project
+    shell.js            tool command dan proses background
+    url.js              read_url: pengambilan halaman terbatas, ekstraksi teks, fallback MCP
+    web.js              web_search: satu tool di atas manajer multi-provider
+  services/
+    websearch/
+      manager.js        urutan provider, fallback, retry, circuit breaker, normalisasi
+      mcp.js            klien MCP (Streamable HTTP + stdio), timeout, galat bertipe
+      providers.js      preset provider dan deskriptor berbasis config
+      normalize.js      normalisasi hasil pencarian/ekstraksi yang agnostik provider
+      serper.js         provider REST Serper-kompatibel (backend yang sudah ada)
+    workspace.js        keamanan path, penulisan atomik, pemblokiran rahasia
+    ushell.js           /bash dan !cmd: tangkapan shell pengguna, group kill, env bersih
+    processes.js        spawn, buffer streaming, timeout, stop, log
+    sessions.js         penyimpanan sesi yang disunting dan cache ringkasan
+    undo.js             snapshot before/after dengan pemeriksaan basi
+    diff.js             diff terpadu dan statistik
+    logger.js           log bertingkat, disunting, berotasi
+    doctor.js           diagnostik tanpa rahasia
+  config/               pemuatan dan validasi env
+  utils/                galat, validasi skema, redaksi, penjaga jaringan (SSRF),
+                        versi (dibaca dari package.json — satu-satunya sumber versi)
+tests/
+  unit/                 uji modul fokus
+  integration/          uji proses CLI sungguhan + aplikasi terhubung
+```
+
+Tool call dieksekusi **secara berurutan**, sehingga dua pemanggilan tidak bisa
+berlomba pada file yang sama. Setiap hasil tool ditambahkan ke percakapan dalam
+format tool-call OpenAI dengan `tool_call_id`-nya yang sesuai.
+
+## Model keamanan
+
+Apa yang dilakukan implementasinya:
+
+- Meresolusi setiap path terhadap realpath workspace dan menolak traversal
+  serta escape symlink. Path absolut di luar workspace ditolak.
+- Memblokir `.env`, `.env.local`, private key/sertifikat, penyimpan kredensial
+  umum (`.ssh`, `.aws`, `.gnupg`, `.kube`, `.docker`, `.npmrc`, `id_rsa*`, ...),
+  serta `*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.jks`/`*.keystore` secara bawaan.
+  `.env.example`, `.env.sample`, `.env.template`, dan `.env.dist` tetap bisa
+  dibaca sebagai dokumentasi.
+- Mengecualikan `node_modules`, `.git`, `dist`, `build`, `coverage`, dan
+  direktori hasil-generate sejenis dari daftar/pencarian secara bawaan; tool bisa
+  memasukkannya secara eksplisit.
+- `read_url` hanya menerima http/https, menolak URL dengan kredensial tertanam,
+  memeriksa ulang setiap hop redirect (https→http ditolak), hanya membaca jenis
+  konten tekstual, dan membatasi badan hingga 2 MB.
+- Menegakkan batas file, hasil pencarian, output tool, konteks, langkah,
+  serta durasi tugas.
+- Memakai penulisan atomik file-temp + rename, mempertahankan CRLF vs LF, dan
+  bisa membatalkan ketika mtime file berubah sejak pemeriksaan.
+- Menjalankan command dengan `spawn(command, args, { shell: false })` dan array
+  argumen. Sintaks shell mentah dinonaktifkan kecuali `AGENT_ALLOW_SHELL=true`,
+  dan selalu bergerbang persetujuan dengan command serta direktori kerjanya
+  ditampilkan persis.
+- Membuang variabel yang tampak seperti kredensial (`*API_KEY*`, `*TOKEN*`,
+  `*SECRET*`, `*PASSWORD*`, ...) dari environment proses anak.
+- Menyunting (redact) kunci API yang dikonfigurasi dan pola token dari log,
+  output command, file sesi, dan pesan galat.
+- Membatasi isi sesi/transkrip yang dipersistensi dan menyimpannya di bawah
+  `.ryuu/` dengan izin khusus pemilik bila didukung.
+
+Apa yang **tidak** dilakukannya:
+
+- **Eksekusi shell bukan sandbox.** Command yang disetujui berjalan dengan izin
+  pengguna Anda dan bisa membaca atau mengubah apa pun yang bisa dilakukan
+  pengguna itu.
+- Label risiko persetujuan hanyalah heuristik. Periksa command persisnya sebelum
+  menyetujui.
+- Ia tidak memasang dependensi otomatis, mendorong commit, men-*deploy*, atau
+  meningkatkan hak istimewa. Command yang disetujui tetap bisa melakukan hal-hal
+  itu — itu keputusan Anda.
+- Ia tidak mengindeks atau mengunggah seluruh workspace; hanya file yang dibaca
+  model yang dikirim ke provider.
+- Ia tidak mengarang atau merekonstruksi rantai-pikir privat. Saat provider
+  mengalirkan delta `reasoning_content`, Ryuu menampilkan teks itu langsung di
+  kotak tertutup yang lebarnya sesuai dengan pratinjau lima baris. Setiap
+  giliran mendapat id stabil; klik sebuah blok (atau jalankan `/expand <id>`)
+  untuk membuka ulang teks lengkapnya, dan Esc atau klik lain menutup panel.
+  Teks lengkapnya juga ditulis ke `.ryuu/logs/reasoning/`. Satu baris aktivitas
+  yang selalu menyala berada di bagian bawah UI percakapan dan membawa seluruh
+  keadaan run: fase, waktu berjalan per fase, total waktu run, langkah, tool
+  yang sedang berjalan beserta posisi antriannya, jumlah token live, dan latensi
+  token pertama; output command yang berjalan mengalirkan ekornya tepat di atas
+  baris itu. Jawaban akhir tidak dikotak: ia dicetak langsung sebagaimana
+  provider menulisnya, dengan Markdown inline (bold, italic, code, link)
+  dirender live, header ATX (`###`) dirender tebal tanpa tanda pagarnya, dan
+  tabel pipe / blok kode bersal die render sebagai blok segera setelah
+  selesai dialirkan. Token kontrol chat-template yang bocor dibuang; jawaban
+  tidak dirender ulang setelahnya.
+
+## Pengujian dan pengembangan
+
+```bash
+npm test               # 300+ uji unit + integrasi (tanpa jaringan, tanpa kunci asli)
+npm run test:unit
+npm run test:integration
+npm run check          # pemeriksaan sintaks di seluruh src/, scripts/, tests/
+npm run verify         # check + test
+```
+
+Uji memakai runner bawaan Node `node:test`, workspace sementara, provider palsu
+terskrip, dan `fetch` yang disuntikkan untuk uji tingkat-SDK. Mereka tidak pernah
+memanggil NVIDIA.
+
+Pemeriksaan *smoke* paket opsional:
+
+```bash
+npm pack --dry-run
+```
+
+## Pemecahan masalah
+
+### `NVIDIA_API_KEY is not set`
+
+Buat `.env` dari `.env.example`, atau ekspor variasinya. Variabel environment
+mendahului `.env`. Jalankan `npm run doctor`.
+
+### 401 / 403
+
+`401` berarti kunci hilang, tidak valid, atau sudah dicabut. `403` biasanya
+berarti kunci tidak punya akses ke model terpilih. Verifikasi kunci dan akses
+model di <https://build.nvidia.com/>, lalu jalankan
+`npm run doctor -- --live`.
+
+### 404
+
+Periksa `NVIDIA_MODEL` dan `NVIDIA_BASE_URL`. Base URL harus berupa root yang
+kompatibel dengan OpenAI, biasanya berakhiran `/v1`.
+
+### 429 / batas laju
+
+Endpoint NVIDIA gratis punya kuota sisi-provider dan tidak dijamin tanpa batas.
+Tunggu lalu coba lagi, perkecil ukuran konteks/tugas, atau pindah model. Ryuu
+mencoba ulang kegagalan sesaat `429`/`5xx`/jaringan dengan backoff eksponensial
+terbatas beserta jitter, serta menghormati `Retry-After` bila ada.
+
+### Model bawaan sangat lambat atau habis waktu
+
+Pada **2026-10-20**, endpoint `deepseek-ai/deepseek-v4.1-flash` yang dihosting
+habis waktu untuk prompt minimal (>60s, tanpa byte) sementara model lain dengan
+kunci yang sama menjawab dalam 1–2s. Forum NVIDIA punya laporan terbuka tentang
+respons 3–5+ menit untuk model ini, jadi ini latensi sisi-provider, bukan
+kegagalan autentikasi. `GET /v1/models` dan
+`GET /v1/models/deepseek-ai/deepseek-v4.1-flash` tetap berhasil dengan kunci yang
+valid.
+
+Pakai model berkemampuan-tool yang cepat sebagai solusi, tanpa mengubah bawaan
+project:
+
+```bash
+node src/index.js --model z-ai/glm-5.3 "your task"
+# atau set NVIDIA_MODEL=z-ai/glm-5.3 di .env
+```
+
+Jika Anda tetap memakai model deepseek, naikkan `AGENT_REQUEST_TIMEOUT_MS` dan
+turunkan `AGENT_MAX_RETRIES` agar satu langkah lambat tidak berulang selama
+banyak menit. Periksa status terkini di <https://build.nvidia.com/> sebelum
+menganggap kunci rusak.
+
+### "Model may not support tool calling"
+
+Ryuu butuh dukungan `tool_calls` bergaya OpenAI pada endpoint terpilih. Coba
+model berkemampuan-tool lewat `NVIDIA_MODEL` atau `/model`. Tanpa tool call,
+agent tetap bisa menjawab secara percakapan, tetapi tidak bisa memeriksa atau
+mengubah file.
+
+### Galat jaringan / timeout
+
+Periksa DNS, proxy, dan akses firewall ke base URL. Naikkan
+`AGENT_REQUEST_TIMEOUT_MS` untuk endpoint lambat. `--debug` menampilkan
+diagnostik yang sudah disunting.
+
+### Sebuah langkah menggantung tanpa output terlihat
+
+Jika aliran berhenti mengirim byte, Ryuu membatalkannya setelah
+`AGENT_STREAM_IDLE_TIMEOUT_MS` (bawaan 45s) dan melaporkan `STREAM_STALLED`;
+langkah hanya dicoba ulang ketika belum ada apa pun yang dicetak. Baris aktivitas
+selalu menunjukkan waktu berjalan, langkah, dan jumlah token, sehingga
+penggantunganan terlihat berbeda dari respons lambat yang tetap berkembang.
+Naikkan nilainya untuk endpoint yang memang lambat, set `0` untuk menonaktifkan
+watchdog, lalu periksa `/status` untuk rata-rata per-pemanggilan.
+
+### Tautan terputus di tengah run (heartbeat)
+
+Saat permintaan provider gagal dengan galat yang bisa dipulihkan (jaringan,
+timeout, `5xx`, `429`), agent tidak menyerah: ia menampilkan **heartbeat** di
+feed aktivitas (`♥ heartbeat · reconnecting · attempt 2 (unlimited) in 1.0s`)
+dan memutar ulang permintaan dengan backoff eksponensial (maksimal 30 detik
+antar-percobaan). Baris `♥ link restored` menandai saat provider menjawab lagi,
+dan run melanjutkan dari tempat ia berhenti. Baris aktivitas tetap berputar
+selama penantian, sehingga terminal tidak terlihat membeku.
+
+`AGENT_MAX_RECOVERY_ATTEMPTS=0` (bawaan) berarti **tanpa batas percobaan**: agent
+terus menyambung ulang sampai provider menjawab, tenggat tugas tercapai, atau
+Anda menekan `Ctrl+C`/mengirim `/cancel`. Set nilai positif (1–1000) bila Anda
+menginginkan penghentian keras. Hanya kegagalan yang tidak bisa dicoba ulang
+(seperti kunci API tidak valid atau galat validasi permintaan `400`) yang
+mengakhiri run seketika.
+
+### Model terus menjawab tanpa isi
+
+Giliran model kosong diperlakukan sebagai percobaan ulang, bukan galat. Agent
+menambahkan dorongan ("your previous response was empty… call the next tool or
+give the final answer"), menampilkan
+`♥ heartbeat · empty response · attempt 3 (unlimited) in 2.0s`, menunggu dengan
+backoff yang dimulai dari `AGENT_RECOVERY_BACKOFF_MS` dan tumbuh hingga 15s,
+lalu bertanya lagi dengan nomor langkah yang sama — sehingga batas opsional
+`AGENT_MAX_STEPS` tidak dikonsumsi oleh percobaan ulang. Tidak ada kegagalan
+`EMPTY_RESPONSE`: run hanya berakhir saat model menjawab, tenggat tugas lewat,
+atau Anda membatalkan. Jika ini terjadi terus-menerus, kemungkinan endpoint
+sedang mengembalikan aliran kosong (periksa `/status`, file log, atau coba model
+lain dengan `/model`).
+
+Setiap percobaan ulang dicatat (`empty model response; retrying`) dengan nomor
+percobaan dan jedanya, dan jumlah percobaan hanya dibatasi oleh tenggat tugas.
+
+### "must be a valid JSON object string" (HTTP 400)
+
+Provider memvalidasi setiap tool call di percakapan pada setiap permintaan, jadi
+dulu satu payload terpotong bisa menggagalkan permintaan *berikutnya* dan
+membunuh seluruh run. Ryuu kini memperbaiki payload terpotong (menutup
+string/array/objek yang masih terbuka) dan mengeksekusi pemanggilannya; jika
+payload tidak bisa diperbaiki, pemanggilan yang rusak diganti dengan `{}` dalam
+sejarah tersimpan dan model diberi tahu untuk mengirimnya ulang. Permintaan
+disederhanakan sekali lagi di sisi provider, sehingga payload rusak tidak lagi
+bisa sampai ke API.
+
+### Sebuah tool terus gagal
+
+Mengulang pemanggilan gagal yang sama tidak bisa menghasilkan informasi baru.
+Setelah dua kegagalan identik, agent memblokir yang ketiga dan memberi tahu model
+untuk mengganti tool, argumen, atau melaporkan temuannya. Command yang keluar
+dengan `1` tanpa output juga dihitung kegagalan — itu biasanya berarti "tidak ada
+yang cocok", bukan "coba lagi".
+
+### Galat panjang konteks
+
+Mulai sesi baru, persempit tugas, turunkan `AGENT_MAX_CONTEXT_CHARS`, atau
+kecilkan `AGENT_MAX_TOOL_OUTPUT_BYTES`. Pemadatan lokal mempertahankan tugas,
+rencana, file yang berubah, command, dan masalah yang menggantung, tetapi tidak
+bisa melampaui konteks provider.
+
+### Ketidaksesuaian versi runtime
+
+Node 25.x adalah target terverifikasi; Node 22+ diterima dengan peringatan di
+doctor. Versi lebih lama gagal saat start. Tingkatkan dengan
+`nvm install 25 && nvm use 25`.
+
+### Di mana lognya?
+
+`.ryuu/logs/agent.log` di dalam workspace (dirotasi pada 5MB). Jalankan dengan
+`--debug` untuk stack trace dan metadata provider yang verbose. Log sudah
+disingkat, tetapi tinjau dulu sebelum dibagikan.
+
+### Perilaku proses
+
+Di Linux/macOS, proses anak berjalan di grup prosesnya sendiri; menghentikannya
+menyinyalkan grup itu, lalu meningkat ke `SIGKILL` setelah timeout. Di Windows,
+grup proses dan semantik sinyal berbeda: Ryuu menghentikan PID anak dan
+mengandalkan perilaku bawaan Node, sehingga cucu proses yatim masih mungkin.
+Utamakan `start_process`/`stop_process` untuk dev server dan verifikasi pembersihan
+secara manual di Windows.
+
+## Keterbatasan yang diketahui
+
+- **Pengujian API NVIDIA langsung membutuhkan kunci Anda.** Uji otomatis repositori
+  ini sepenuhnya offline. Validasi langsung pada 2026-10-20 lolos dengan
+  `z-ai/glm-5.3` (tool call sungguhan + jawaban akhir); model DeepSeek bawaan
+  sedang habis waktu di sisi provider saat itu. Jalankan ulang
+  `npm run doctor -- --live` untuk kunci dan region Anda.
+- Perilaku model, ukuran konteks, kuota gratis, batas laju, dan dukungan tool
+  calling bergantung pada provider/model dan bisa berubah.
+- Respons dialirkan dan dikumpulkan sisi-klien: reasoning muncul langsung di
+  kotaknya dan jawaban akhir dicetak langsung saat tiba (tanpa kotak, tanpa
+  render ulang). Mode plain/non-TTY menyembunyikan aliran langsung dan hanya
+  melaporkan jumlah karakter reasoning.
+- Tool call berjalan berurutan, bukan paralel. Prompt meminta model untuk
+  menggabungkan pemanggilan independen ke dalam satu respons (beberapa baca
+  sekaligus) untuk memotong bolak-balik.
+- Transport-nya stateless, jadi prompt dikirim ulang dengan setiap permintaan. Ia
+  dirakit sekali dan identik byte-per-byte, tidak dibangun ulang; brief per-tugas
+  adalah satu-satunya bagian yang bervariasi.
+- Worklog adalah lembar fakta ringkas, bukan isi file. Ia menghentikan pembacaan
+  ulang dan analisis ulang yang redundan, tetapi file besar tetap harus dibaca
+  sekali.
+- `--tui` menyimpan seluruh transkrip di memori karena setiap frame digambar ulang
+  darinya. Tangkapan per-blok dibatasi, tetapi sesi yang sangat panjang tumbuh
+  seiring jumlah blok; belum ada pencarian dalam aplikasi atau mode salin, dan
+  pengubahan ukuran mengalirkan kembali frame dari model alih-alih mempertahankan
+  tata letak piksel sebelumnya.
+- Penyalinan clipboard memakai OSC 52. Sebagian terminal menonaktifkannya, dan
+  tmux perlu `set -g set-clipboard on`; ketika sekuensnya diabaikan, clipboard
+  mempertahankan isi lamanya, sementara `/copy` tetap melaporkan jumlah karakter
+  yang dikirim.
+- `/bash` dan `!cmd` sengaja melewati prompt persetujuan: Anda yang mengetik
+  commandnya, jadi ia berjalan dengan izin Anda sendiri. `--read-only` adalah
+  satu-satunya yang memblokirnya.
+- `/undo` terbatas pada sesi/tugas dan menolak saat file berubah di bawahnya.
+- Sesi disimpan lokal dan bukan log kejadian lengkap yang bisa diputar ulang.
+- Tidak ada sandbox atau isolasi kontainer bawaan.
+- Sintaks shell mentah harus diaktifkan secara eksplisit dan disetujui; penulisan
+  atomik tidak melindungi dari proses eksternal yang crash di tengah penulisan.
+- Render Markdown mencakup sintaks umum; gambar, tabel bersarang, dan HTML
+  kompleks ditampilkan sebagai teks.
+- `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
+  JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
+  penyederhanaan dari halaman tersebut.
+- Ini project 0.2.0: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+
+## Daftar periksa validasi API langsung
+
+Dengan kunci asli yang dikonfigurasi:
+
+1. `npm run doctor` → semua pemeriksaan non-konektivitas lolos, kunci tidak
+   dicetak.
+2. `npm run doctor -- --live` → `provider.connectivity` lolos dan melaporkan
+   latensi. Jika model bawaan habis waktu, konfirmasi dengan
+   `--model z-ai/glm-5.3` sebelum menganggap kunci buruk (lihat bagian
+   pemecahan masalah latensi).
+3. `npm link && ryuu` → banner menampilkan model, provider, workspace, versi
+   Node.
+4. Tanya: `List the files in this project and summarize what it does.` → amati
+   pemanggilan `list_files`/`read_file` sungguhan dan ringkasan akhir.
+5. Tanya: `Add a comment to the top of <file> and show me the diff.` → setujui
+   diff → konfirmasi file berubah dan ringkasannya menyebutkannya.
+6. Tanya: `Run npm test and report the result.` → setujui command persisnya →
+   verifikasi exit code asli, durasi, dan outputnya.
+7. `/undo` bekerja untuk perubahan file; `/status`, `/diff`, `/sessions`,
+   `/logs` memperlihatkan bukti.
+
+## Lisensi
+
+MIT (lihat `package.json`).
+

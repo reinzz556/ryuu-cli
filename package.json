@@ -1,0 +1,48 @@
+{
+  "name": "ryuu-cli",
+  "version": "0.2.0",
+  "description": "Ryuu Agent CLI - an autonomous, approval-gated AI coding agent for your terminal",
+  "type": "module",
+  "bin": {
+    "ryuu": "./src/index.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "agent": "node src/index.js",
+    "test": "node --test --test-concurrency=1 \"tests/unit/*.test.js\" \"tests/integration/*.test.js\"",
+    "test:unit": "node --test \"tests/unit/*.test.js\"",
+    "test:integration": "node --test \"tests/integration/*.test.js\"",
+    "check": "node scripts/check.js",
+    "doctor": "node src/index.js --doctor",
+    "verify": "npm run check && npm test"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-agent",
+    "nvidia",
+    "openai-compatible",
+    "terminal"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "chalk": "^6.0.1",
+    "openai": "^7.39.0",
+    "ora": "^9.4.1"
+  }
+}
