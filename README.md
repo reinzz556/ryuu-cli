@@ -28,6 +28,8 @@ kompatibel dengan OpenAI.
   click a block or /expand N   !cmd shell   ⌃C cancel   /help commands   /exit quit
 ```
 
+![Contoh UI mode normal Ryuu](https://cdn.zass.in/JLdbvD233M.jpg)
+
 ## Fitur
 
 - **Loop agent yang eksplisit** — model → tool call tervalidasi → persetujuan →
@@ -241,6 +243,8 @@ Anda percaya.
 ```bash
 ryuu --tui
 ```
+
+![Contoh UI mode TUI Ryuu](https://cdn.zass.in/5hjUEOV2xB.jpg)
 
 Antarmuka bawaan menambahkan baris ke scrollback terminal dan melupakan setiap
 barisnya. `--tui` justru menyimpan percakapan sebagai data: setiap item punya id
