@@ -24,6 +24,8 @@ import {
  */
 
 const PREVIEW_LINES = 5;
+/** Kept code for a copy target; OSC 52 payloads are capped at the same size. */
+const MAX_CODE_COPY_CHARS = 100_000;
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /**
@@ -301,7 +303,7 @@ export function bannerRows(header = {}, width, { c } = {}) {
   }
   rows.push(bannerBottom(width, c));
   const hint =
-    'type a task · /help commands · !cmd shell · click a prompt to copy · PgUp/PgDn scroll';
+    'type a task · /help commands · !cmd shell · click a prompt or code block to copy · PgUp/PgDn scroll';
   for (const line of wrapText(hint, Math.max(10, width - 2))) rows.push(` ${paint('gray', line)}`);
   return rows;
 }
@@ -559,14 +561,22 @@ function buildRows(item, width, { c, color }) {
     // text is never mistaken for the tail of a tool or a notice.
     pushHeader(`${paint('violet', '◆')} ${c.bold(paint('white', 'response'))}`);
     // Assistant prose: white text, sky-blue Markdown accents and tables.
+    // Every rendered row of a fenced code block is remembered so a click on its
+    // `⧉ copy` chip (or anywhere in the block) copies exactly that code.
+    const copies = new Map();
     const lines = renderMarkdown(item.text || '', {
       width: Math.max(20, width - 2),
       c,
       color,
       base: (text) => paint('white', text),
       accent: (text) => paint('sky', text),
+      onCodeBlock: ({ lang, code, start, end }) => {
+        const target = { lang, code: String(code ?? '').slice(0, MAX_CODE_COPY_CHARS) };
+        for (let row = start; row <= end; row += 1) copies.set(row, target);
+      },
     });
     for (const line of lines) rows.push(line ? ` ${line}` : '');
+    if (copies.size > 0) rows.copies = copies;
     return rows;
   }
 
@@ -635,7 +645,9 @@ export function layoutTranscript(transcript, width, opts) {
       }
       rows.push({ text: toolHeader(calls, opts), itemId: null });
     }
-    for (const text of itemLines) rows.push({ text, itemId: item.id });
+    for (let row = 0; row < itemLines.length; row += 1) {
+      rows.push({ text: itemLines[row], itemId: item.id, copy: itemLines.copies?.get(row) ?? null });
+    }
     previous = item;
   }
   return rows;
@@ -733,6 +745,7 @@ export class Tui {
     this.lastTotal = 0;
     this.viewport = 1;
     this.clickMap = [];
+    this.copyMap = [];
     this.closed = false;
     this.frameTimer = null;
     this.buffer = '';
@@ -986,22 +999,22 @@ export class Tui {
   }
 
   heartbeat({ phase = 'retry', attempt = 0, maxAttempts = 0, delayMs = 0, code = '', message = '' } = {}) {
+    // Heartbeat notices are bold sky blue: transport news, not a fault.
+    const beat = (text) => this.c.bold(this.paint('sky', text));
     if (phase === 'restored') {
-      this.transcript.message(` ${this.paint('green', '♥')} ${this.paint('green', 'link restored — the run continues')}`);
+      this.transcript.message(` ${beat('♥ link restored — the run continues')}`);
       this.setPhase('working');
       return;
     }
     if (phase === 'degraded') {
-      this.transcript.message(
-        ` ${this.paint('amber', '♥')} ${this.paint('amber', `${code || 'degraded'}${message ? ` · ${message}` : ''}`)}`,
-      );
+      this.transcript.message(` ${beat(`♥ ${code || 'degraded'}${message ? ` · ${message}` : ''}`)}`);
       this.setPhase('working');
       return;
     }
     const cap = Number(maxAttempts) > 0 ? `/${maxAttempts}` : ' (unlimited)';
     const what = code === 'EMPTY_RESPONSE' ? 'empty response' : 'reconnecting';
     this.transcript.message(
-      ` ${this.paint('amber', '♥')} ${this.paint('amber', `heartbeat · ${what} · attempt ${attempt}${cap} in ${formatSeconds(delayMs)}`)}`,
+      ` ${beat(`♥ heartbeat · ${what} · attempt ${attempt}${cap} in ${formatSeconds(delayMs)}`)}`,
     );
     this.setPhase(code === 'EMPTY_RESPONSE' ? 'retrying' : 'reconnecting');
   }
@@ -1159,6 +1172,18 @@ export class Tui {
     return result;
   }
 
+  /** Copy one rendered fenced code block to the terminal clipboard. */
+  copyCode({ lang = '', code = '' } = {}) {
+    const result = copyToClipboard(String(code ?? ''), { output: this.output });
+    const label = lang ? `${lang} code block` : 'code block';
+    this.notify(
+      result.ok
+        ? `⧉ copied ${label} · ${result.chars} chars`
+        : 'clipboard blocked by this terminal (OSC 52)',
+    );
+    return result;
+  }
+
   /** Copy a sent prompt; `which` counts back from the newest (0 = latest). */
   copyTask(which = 0) {
     const tasks = this.transcript.items.filter((item) => item.kind === 'task');
@@ -1273,6 +1298,7 @@ export class Tui {
     const start = Math.max(0, end - viewport);
     const visible = rows.slice(start, end);
     this.clickMap = visible.map((row) => row.itemId);
+    this.copyMap = visible.map((row) => row.copy ?? null);
 
     const frame = [clipLine(this.headerLine(width), width)];
     for (let index = 0; index < viewport; index += 1) {
@@ -1539,6 +1565,13 @@ export class Tui {
     if (release || (button & 3) !== 0) return;
     const index = y - 2; // one header row, 1-based screen row
     if (index < 0 || index >= this.viewport) return;
+    // A code block is a copy target, exactly like a sent prompt: the chip is
+    // only a label, the whole block is the hit area.
+    const copyTarget = this.copyMap?.[index];
+    if (copyTarget) {
+      this.copyCode(copyTarget);
+      return;
+    }
     const id = this.clickMap[index];
     if (!id) return;
     const item = this.transcript.get(id);

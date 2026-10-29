@@ -64,7 +64,9 @@ export function buildRawConfig(env = process.env, { cwd = process.cwd() } = {}) 
     baseURL: env.RYUU_BASE_URL,
     provider: env.RYUU_PROVIDER,
     extraProviders: env.RYUU_PROVIDERS,
-    providerEnv: env,
+    // A copy: persisted settings are injected here, and process.env must never
+    // be mutated by the settings layer.
+    providerEnv: { ...env },
     workspace: env.AGENT_WORKSPACE || '.',
     logLevel: env.LOG_LEVEL || 'info',
     maxSteps: intOrRaw(env.AGENT_MAX_STEPS),

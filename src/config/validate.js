@@ -12,10 +12,16 @@ import {
   resolveProviderId,
 } from '../providers/catalog.js';
 
-const APPROVAL_POLICIES = ['ask', 'auto', 'read-only'];
-const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'];
+/** Approval policies accepted by AGENT_APPROVAL_POLICY (also used by settings). */
+export const APPROVAL_POLICIES = ['ask', 'auto', 'read-only'];
+/** Log levels accepted by LOG_LEVEL (also used by settings). */
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'];
 
-const LIMITS = {
+/**
+ * Numeric config limits: [min, max, default]. Exported so the settings editor
+ * validates against exactly the same ranges as startup instead of copying them.
+ */
+export const CONFIG_LIMITS = {
   maxSteps: [0, 100000, 0],
   maxOutputTokens: [64, 32768, 4096],
   requestTimeoutMs: [1000, 600000, 120000],
@@ -48,7 +54,7 @@ const SEARCH_PLACEHOLDER_KEY = /^(your[_-]?(search|serper|websearch)[_-]?api[_-]
 const PLACEHOLDER_KEY = /^(your[_-]?.*api[_-]?key|changeme|replace[_-]?me|<.*>)$/i;
 
 function toInt(name, value, issues) {
-  const [min, max, fallback] = LIMITS[name];
+  const [min, max, fallback] = CONFIG_LIMITS[name];
   if (value === undefined || value === null || value === '') return fallback;
   const parsed = typeof value === 'number' ? value : Number(String(value).trim());
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
@@ -238,7 +244,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   }
 
   const values = {};
-  for (const name of Object.keys(LIMITS)) {
+  for (const name of Object.keys(CONFIG_LIMITS)) {
     values[name] = toInt(name, raw[name], issues);
   }
 

@@ -452,6 +452,31 @@ test('a sent prompt shows a copy button, and clicking the prompt copies it', () 
   }
 });
 
+test('a code block shows a copy button, and clicking it copies only the code', () => {
+  const { tui, writes } = tuiWithClipboard();
+  try {
+    tui.contentDelta({ text: 'Here is the fix:\n\n```js\nconst answer = 42;\n```\n' });
+    tui.answerEnd();
+    tui.forceRender();
+
+    const rows = layoutTranscript(tui.transcript, 69, { c, color: false }).map((row) => row.text);
+    assert.ok(
+      rows.some((line) => line.includes('⧉ copy')),
+      'the code block header shows a copy chip',
+    );
+    const index = tui.copyMap.findIndex(Boolean);
+    assert.ok(index >= 0, 'the code block is a clickable copy target');
+
+    tui.handleMouseReport(['', '0', '10', String(index + 2), 'M']);
+    const sequence = writes.find((chunk) => chunk.includes('\x1b]52;c;'));
+    assert.ok(sequence, 'the click writes an OSC 52 clipboard sequence');
+    assert.equal(copiedText(sequence), 'const answer = 42;', 'only the code is copied, without fences');
+    assert.match(tui.toast.text, /copied js code block/);
+  } finally {
+    tui.close();
+  }
+});
+
 test('copyTask walks back through the sent prompts, newest first', () => {
   const { tui, writes } = tuiWithClipboard();
   try {

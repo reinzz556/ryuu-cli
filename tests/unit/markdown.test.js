@@ -51,6 +51,28 @@ test('renders fenced code blocks and wraps long code lines to the width', () => 
   assert.ok(output.every((line) => line.length <= 30), 'code block lines must fit the width');
 });
 
+test('a fenced code block carries a copy chip and reports its rendered row range', () => {
+  const blocks = [];
+  const markdown = ['before', '', '```js', 'const value = 1;', '```', '', 'after'].join('\n');
+  const output = renderMarkdown(markdown, {
+    width: 40,
+    color: false,
+    onCodeBlock: (info) => blocks.push(info),
+  });
+  const header = output.findIndex((line) => line.includes('⧉ copy'));
+  assert.ok(header >= 0, 'the code header shows a copy chip');
+  assert.equal(blocks.length, 1, 'one collector entry per fenced block');
+  assert.equal(blocks[0].lang, 'js');
+  assert.equal(blocks[0].code, 'const value = 1;', 'the copied text is the code, without fences');
+  assert.equal(blocks[0].start, header);
+  assert.ok(blocks[0].end >= header + 2, 'the range covers the whole block');
+  assert.match(output[blocks[0].end], /^╰/);
+  assert.ok(output.every((line) => line.length <= 40), 'the chip still fits the width');
+
+  const withoutChip = renderMarkdown('```\nx\n```', { width: 40, color: false, copy: false });
+  assert.ok(!withoutChip.join('\n').includes('⧉ copy'), 'the chip can be switched off');
+});
+
 test('tables shrink and wrap to the available width', () => {
   const markdown = [
     '| File | Status | Notes |',

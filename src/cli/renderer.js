@@ -11,9 +11,12 @@ const PREVIEW_LINES = 5;
 const COMMAND_PREVIEW_LINES = 5;
 /** Output kept for the expandable command view; one huge log cannot pin memory. */
 const MAX_COMMAND_OUTPUT_CHARS = 200_000;
+/** Code kept for a clipboard target; OSC 52 payloads are capped at the same size. */
+const MAX_CODE_COPY_CHARS = 100_000;
 
 const PALETTE = {
   cyan: '#22d3ee',
+  sky: '#38bdf8',
   blue: '#60a5fa',
   violet: '#a78bfa',
   pink: '#f472b6',
@@ -175,6 +178,11 @@ export class Renderer {
     // `screenLines` mirrors the printed transcript so a click can be mapped
     // back to the block it landed on (wrapped rows included).
     this.blocks = new Map();
+    // Fenced code blocks rendered in answers are clipboard targets, not
+    // expandable blocks: clicking one copies its code instead of opening a
+    // panel. They share the block id counter but stay out of `blocks`, so
+    // /expand and the block list never offer them.
+    this.copies = new Map();
     this.nextBlockId = 1;
     this.blockView = null;
     this.promptController = null;
@@ -217,7 +225,7 @@ export class Renderer {
     };
   }
 
-  #write(line = '') {
+  #write(line = '', blockId = null) {
     if (this.blockView) this.closeBlockView();
     // Take the prompt and the live region off screen: the region can only be
     // erased from its own first row, and the prompt sits below it.
@@ -232,7 +240,7 @@ export class Renderer {
       this.answer.block = null;
     }
     const text = String(line ?? '');
-    this.#trackScreen(`${text}\n`);
+    this.#trackScreen(`${text}\n`, blockId);
     this.stdout.write(`${text}\n`);
     // Draw the activity line (and the reasoning box) under the new output.
     this.#paintAfterWrite();
@@ -440,8 +448,42 @@ export class Renderer {
   #markdown(text, { base = null } = {}) {
     if (!text) return;
     const width = Math.max(24, this.#width() - 4);
-    for (const line of renderMarkdown(cleanModelTokens(text), { width, c: this.c, color: this.color, base })) {
-      this.#write(line ? `  ${line}` : '');
+    const copies = [];
+    const rows = renderMarkdown(cleanModelTokens(text), {
+      width,
+      c: this.c,
+      color: this.color,
+      base,
+      // A piped run has no mouse and no click map: keep its output clean.
+      copy: this.ansi,
+      onCodeBlock: (info) => copies.push(info),
+    });
+    this.#printMarkdownRows(rows, copies);
+  }
+
+  /**
+   * Print rendered rows and mark every row of a fenced code block with its
+   * clipboard target, so a click on the `⧉ copy` chip (or the block) copies it.
+   */
+  #printMarkdownRows(rows, copies, write = null) {
+    const targets = copies.map(({ lang, code, start, end }) => {
+      const target = {
+        id: this.nextBlockId,
+        kind: 'code',
+        lang,
+        code: String(code ?? '').slice(0, MAX_CODE_COPY_CHARS),
+        start,
+        end,
+      };
+      this.nextBlockId += 1;
+      this.copies.set(target.id, target);
+      return target;
+    });
+    for (let index = 0; index < rows.length; index += 1) {
+      const target = targets.find((item) => index >= item.start && index <= item.end);
+      const line = rows[index] ? `  ${rows[index]}` : '';
+      if (write) write(line, target?.id ?? null);
+      else this.#write(line, target?.id ?? null);
     }
   }
 
@@ -819,8 +861,9 @@ export class Renderer {
         this.#write(this.c.dim(`  [heartbeat] ${label}${shownCode ? ` · ${shownCode}` : ''}`));
         return;
       }
+      // Heartbeat notices are bold sky blue: transport news, not a fault.
       this.#write(
-        `  ${this.#paint('amber', '♥')} ${this.c.bold('heartbeat')} ${this.c.dim(`· ${label}`)}${shownCode ? this.c.dim(` · ${shownCode}`) : ''}`,
+        `  ${this.c.bold(this.#paint('sky', `♥ heartbeat · ${label}${shownCode ? ` · ${shownCode}` : ''}`))}`,
       );
       return;
     }
@@ -831,7 +874,7 @@ export class Renderer {
         return;
       }
       this.#write(
-        `  ${this.#paint('green', '♥')} ${this.c.bold('heartbeat')} ${this.c.dim(`· link restored after ${attempt} attempt(s)`)}`,
+        `  ${this.c.bold(this.#paint('sky', `♥ heartbeat · link restored after ${attempt} attempt(s)`))}`,
       );
       return;
     }
@@ -842,7 +885,12 @@ export class Renderer {
       return;
     }
     this.#write(
-      `  ${this.#paint('amber', '♥')} ${this.c.bold('heartbeat')} ${this.c.dim(`· ${code || 'degraded'}`)}${detail ? this.c.dim(` · ${this.#fit(detail, this.#innerWidth() - 24)}`) : ''}`,
+      `  ${this.c.bold(
+        this.#paint(
+          'sky',
+          `♥ heartbeat · ${code || 'degraded'}${detail ? ` · ${this.#fit(detail, this.#innerWidth() - 24)}` : ''}`,
+        ),
+      )}`,
     );
   }
 
@@ -906,9 +954,9 @@ export class Renderer {
   }
 
   /** Raw answer output: takes the region down, then restores it underneath. */
-  #answerWrite(text) {
+  #answerWrite(text, blockId = null) {
     const prompt = this.#openScreen();
-    this.#trackScreen(text);
+    this.#trackScreen(text, blockId);
     this.stdout.write(text);
     this.#paintAfterWrite();
     this.#closeScreen(prompt);
@@ -1220,9 +1268,16 @@ export class Renderer {
       text += '\n```'; // the stream ended mid-fence: close it so it renders
     }
     const width = Math.max(24, this.#width() - 4);
-    for (const line of renderMarkdown(text, { width, c: this.c, color: this.color, base: (item) => this.#paint('white', item) })) {
-      this.#answerWrite(line ? `  ${line}\n` : '\n');
-    }
+    const copies = [];
+    const rows = renderMarkdown(text, {
+      width,
+      c: this.c,
+      color: this.color,
+      base: (item) => this.#paint('white', item),
+      copy: this.ansi,
+      onCodeBlock: (info) => copies.push(info),
+    });
+    this.#printMarkdownRows(rows, copies, (line, id) => this.#answerWrite(line ? `${line}\n` : '\n', id));
   }
 
   /** Flush the trailing partial line; the answer is plain text and is never erased. */
@@ -1855,6 +1910,16 @@ export class Renderer {
     if (absolute < 0 || absolute >= transcriptRows) return false;
     const id = this.#blockAtRow(absolute);
     if (!id) return false;
+    const copy = this.copies.get(id);
+    if (copy) {
+      const result = copyToClipboard(copy.code, { output: this.stdout });
+      if (result.ok) {
+        this.info(`Copied ${result.chars} chars of ${copy.lang ? `${copy.lang} ` : ''}code to the clipboard (OSC 52).`);
+      } else {
+        this.warn('Clipboard copy needs an interactive terminal that supports OSC 52.');
+      }
+      return true;
+    }
     if (this.blockView?.id === id) {
       this.closeBlockView();
       return true;

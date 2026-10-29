@@ -1,13 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ENTRY = path.join(ROOT, 'src', 'index.js');
 
+function isolatedDir(prefix = 'ryuu-settings-integration-') {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
 function runCli(args, { env = {}, input = '' } = {}) {
+  // Never read or write the developer's real global settings. Tests that need
+  // to inspect the file pass their own RYUU_CONFIG_DIR, which wins below.
+  const explicitConfigDir = typeof env.RYUU_CONFIG_DIR === 'string' && env.RYUU_CONFIG_DIR;
+  const configDir = explicitConfigDir || fs.mkdtempSync(path.join(os.tmpdir(), 'ryuu-cli-config-'));
   const result = spawnSync(process.execPath, [ENTRY, ...args], {
     cwd: ROOT,
     encoding: 'utf8',
@@ -15,11 +25,13 @@ function runCli(args, { env = {}, input = '' } = {}) {
     timeout: 60000,
     env: {
       ...process.env,
+      RYUU_CONFIG_DIR: configDir,
       NVIDIA_API_KEY: '',
       AGENT_WORKSPACE: '',
       ...env,
     },
   });
+  if (!explicitConfigDir) fs.rmSync(configDir, { recursive: true, force: true });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -103,4 +115,102 @@ test('--doctor with a fake key runs offline checks without printing the key', ()
   assert.match(result.stdout, /\[PASS\] config/);
   assert.match(result.stdout, /Offline check only/);
   assert.ok(!result.stdout.includes(key));
+});
+
+test('--settings --list prints the numbered settings without starting the agent', () => {
+  const dir = isolatedDir();
+  const result = runCli(['--settings', '--list'], { env: { RYUU_CONFIG_DIR: dir } });
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /◇ Ryuu Settings/);
+  assert.match(result.stdout, /DEFAULT_PROVIDER/);
+  assert.match(result.stdout, /NVIDIA_API_KEY/);
+  assert.match(result.stdout, /\/exit/);
+  assert.ok(!result.stdout.includes('RYUU // AGENT OS'), 'no banner: the agent never starts');
+  assert.ok(!fs.existsSync(path.join(dir, 'config.json')), 'listing does not create a file');
+});
+
+test('--settings --list accepts the flags in any order', () => {
+  const dir = isolatedDir();
+  for (const args of [
+    ['--list', '--settings'],
+    ['--tui', '--settings', '--list'],
+  ]) {
+    const result = runCli(args, { env: { RYUU_CONFIG_DIR: dir } });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.match(result.stdout, /DEFAULT_PROVIDER/);
+  }
+});
+
+test('--settings --help shows the editor commands and writes nothing', () => {
+  const dir = isolatedDir();
+  const result = runCli(['--settings', '--help'], { env: { RYUU_CONFIG_DIR: dir } });
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /Editor commands/);
+  assert.match(result.stdout, /\/reset <number>/);
+  assert.equal(fs.readdirSync(dir).length, 0);
+});
+
+test('--settings without a terminal fails gracefully and initializes a private file', () => {
+  const dir = isolatedDir();
+  const result = runCli(['--settings'], { input: '', env: { RYUU_CONFIG_DIR: dir } });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /interactive terminal/);
+  const file = path.join(dir, 'config.json');
+  assert.ok(fs.existsSync(file), 'the missing settings file is initialized');
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(saved.version, 1);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('--settings --tui without a terminal says so instead of hanging', () => {
+  const dir = isolatedDir();
+  const result = runCli(['--settings', '--tui'], { input: '', env: { RYUU_CONFIG_DIR: dir } });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--settings --tui needs an interactive terminal/);
+  assert.match(result.stderr, /interactive terminal/);
+});
+
+test('--list without --settings keeps the established error behaviour', () => {
+  const result = runCli(['--list']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--list is only valid with --settings/);
+});
+
+test('provider credentials in the settings file are used without printing them', () => {
+  const dir = isolatedDir();
+  const workspace = isolatedDir();
+  const key = 'nvapi-settings-integration-key-123456';
+  fs.writeFileSync(
+    path.join(dir, 'config.json'),
+    JSON.stringify({
+      version: 1,
+      provider: 'nvidia',
+      providers: { nvidia: { apiKey: key } },
+    }),
+    'utf8',
+  );
+  const result = runCli(['--doctor'], {
+    env: {
+      RYUU_CONFIG_DIR: dir,
+      AGENT_WORKSPACE: workspace,
+      NVIDIA_API_KEY: '',
+      RYUU_PROVIDER: '',
+      RYUU_MODEL: '',
+    },
+  });
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /\[PASS\] config/);
+  assert.ok(!result.stdout.includes(key), 'the key must never be printed');
+  assert.ok(!result.stderr.includes(key));
+});
+
+test('a malformed settings file is reported and left untouched', () => {
+  const dir = isolatedDir();
+  const file = path.join(dir, 'config.json');
+  fs.writeFileSync(file, '{ "providers": oops', 'utf8');
+  const before = fs.readFileSync(file, 'utf8');
+  const result = runCli(['--settings', '--list'], { env: { RYUU_CONFIG_DIR: dir } });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /not valid JSON/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
 });

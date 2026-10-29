@@ -640,7 +640,7 @@ test('the system prompt tells the model which tools and project commands exist',
     assert.match(prompt, /run_command\(/);
     assert.match(prompt, /search_files\(/);
     assert.match(prompt, /ARGUMENT RULES/);
-    assert.match(prompt, /RECOVERY RULES/);
+    assert.match(prompt, /HEARTBEAT AND RECOVERY/, 'recovery guidance must stay in the prompt');
     assert.match(prompt, /npm run test/, 'the project scripts must be listed');
   } finally {
     await ctx.cleanup();

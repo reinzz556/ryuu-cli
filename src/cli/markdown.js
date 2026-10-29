@@ -349,12 +349,18 @@ function highlightCode(line, lang, c, color) {
   return output;
 }
 
-function renderCodeBlock(lines, lang, { width, c, color, accent = null }) {
+function renderCodeBlock(lines, lang, { width, c, color, accent = null, copy = true }) {
   const label = lang ? ` ${lang} ` : ' code ';
-  const rule = Math.max(1, width - visibleLength(label) - 3);
+  // The chip is the visible `⧉ copy` button: the TUI and the line renderer
+  // register the whole block as its hit target. It shrinks away on a block too
+  // narrow to read as a button instead of eating the whole rule.
+  const chip = copy ? ' ⧉ copy ' : '';
+  const showChip = Boolean(chip) && width - 2 - visibleLength(label) - visibleLength(chip) >= 4;
+  const rule = Math.max(1, width - 2 - visibleLength(label) - (showChip ? visibleLength(chip) : 0));
   const paint = toAccent(accent, c);
+  const chipPaint = showChip ? c.bgHex('#1e293b')(c.hex(SLATE)(chip)) : '';
   const output = [
-    `${paint('╭─')}${c.bold(label)}${c.dim('─'.repeat(rule))}`,
+    `${paint('╭─')}${c.bold(label)}${c.dim('─'.repeat(rule))}${chipPaint}`,
   ];
   const body = lines.length > 0 ? lines : [''];
   const codeWidth = Math.max(8, width - 2);
@@ -392,10 +398,22 @@ function isBlockStart(lines, index) {
  * Render a Markdown message for a terminal.
  *
  * @param {string} text
- * @param {{width?: number, c?: object, color?: boolean, base?: Function}} options
+ * @param {object} options
+ * @param {number} [options.width] visible columns available
+ * @param {object} [options.c] chalk instance
+ * @param {boolean} [options.color] paint ANSI styles
+ * @param {Function} [options.base] default inline style
+ * @param {Function} [options.accent] accent paint for rules and tables
+ * @param {boolean} [options.copy] show the `⧉ copy` chip on code blocks
+ * @param {Function} [options.onCodeBlock] receives `{ lang, code, start, end }`
+ *   where `start`/`end` are the rendered row range of the block, so a caller
+ *   can make that range a clipboard hit target
  * @returns {string[]} lines without a trailing newline and without outer indent
  */
-export function renderMarkdown(text, { width = 80, c = null, color = true, base = null, accent = null } = {}) {
+export function renderMarkdown(
+  text,
+  { width = 80, c = null, color = true, base = null, accent = null, copy = true, onCodeBlock = null } = {},
+) {
   const chalk = toChalk(c, color);
   const paint = toAccent(accent, chalk);
   const lines = sanitize(text).split('\n');
@@ -424,7 +442,11 @@ export function renderMarkdown(text, { width = 80, c = null, color = true, base 
       }
       if (index < lines.length) index += 1;
       pushBlank();
-      output.push(...renderCodeBlock(code, fence[1], { width, c: chalk, color, accent: paint }));
+      const start = output.length;
+      output.push(...renderCodeBlock(code, fence[1], { width, c: chalk, color, accent: paint, copy }));
+      if (typeof onCodeBlock === 'function') {
+        onCodeBlock({ lang: fence[1], code: code.join('\n'), start, end: output.length - 1 });
+      }
       continue;
     }
 

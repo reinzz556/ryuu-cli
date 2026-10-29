@@ -7,6 +7,50 @@ Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
 _(Belum ada apa pun.)_
 
+## [0.3.0] - 2026-10-29
+
+### Ditambahkan
+
+- **Pengaturan global `ryuu --settings` dan `ryuu --settings --tui`.** Nilai
+  pengguna kini tinggal di satu file milik pengguna — Linux/BSD
+  `$XDG_CONFIG_HOME/ryuu/config.json` (bawaan `~/.config/ryuu/config.json`),
+  macOS `~/Library/Application Support/ryuu/config.json`, Windows
+  `%APPDATA%\ryuu\config.json` — dan bisa dialihkan dengan `RYUU_CONFIG_DIR`,
+  sehingga terbaca dari direktori kerja mana pun. `--settings` membuka editor
+  baris bernomor (`<nomor> <nilai>`, `/list`, `/show`, `/reset`, `/help`,
+  `/exit`); `--settings --tui` membuka layar penuh dengan panel deskripsi,
+  navigasi panah, pengubahan pilihan provider/model, serta simpan/batal; dan
+  `--settings --list` mencetak daftar tanpa masuk mode edit. Setiap perubahan
+  tervalidasi lalu langsung disimpan secara atomik (fsync + rename) dengan izin
+  `0600`; satu kunci tidak pernah menghapus kunci lain, API key selalu
+  disamarkan, dan JSON yang rusak dilaporkan tanpa pernah ditimpa. Presedensi:
+  flag CLI > environment/`.env` > `.ryuu/preferences.json` workspace > file
+  pengaturan global > bawaan katalog. Kredensial provider, base URL, model,
+  batas agent, dan kunci web search semuanya bisa diatur dari sini; provider
+  tambahan dari `RYUU_PROVIDERS` otomatis mendapat barisnya sendiri. Mode
+  pengaturan tidak pernah membangun agent, tool, atau permintaan model.
+- **Tombol `⧉ copy` pada blok kode.** Code fence di jawaban kini membawa chip
+  `⧉ copy` di header-nya, dan seluruh blok menjadi area klik: mengekliknya
+  menyalin isi kode (tanpa penanda fence) ke clipboard terminal lewat OSC 52,
+  sama seperti blok prompt. Berlaku di kedua antarmuka — `--tui` lewat peta klik
+  per-baris, antarmuka baris lewat `Renderer.copies` — dengan teks yang disalin
+  dibatasi 100k karakter seperti payload OSC 52.
+
+### Diubah
+
+- **Prompt internal dirapikan dan dioptimalkan untuk waktu.** `buildSystemPrompt`
+  kini menaruh aturan efisiensi dan pemulihan di bagian tersendiri: jangan
+  menganalisis ulang fakta dari worklog/tool result, berpikir sekali lalu
+  bertindak, dan — terutama — **heartbeat** (reconnect, giliran kosong,
+  argumen yang diperbaiki/dipotong) diperlakukan sebagai transport, bukan reset
+  tugas: lanjutkan aksi yang terputus tanpa mengulang read/search/command yang
+  sudah berhasil. Nudge giliran kosong dan peringatan anggaran 70% ikut
+  menegaskan hal yang sama.
+- **Notifikasi heartbeat kini biru langit tebal.** Pesan heartbeat pada UI baris
+  dan `--tui` (reconnect, giliran kosong, argumen diperbaiki, tautan pulih)
+  dicetak dengan warna biru langit (`#38bdf8`) dan tebal, menggantikan kuning/
+  hijau, agar terbaca sebagai kabar transport, bukan galat.
+
 ## [0.2.1] - 2026-10-25
 
 ### Ditambahkan

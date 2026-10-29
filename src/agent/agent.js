@@ -64,10 +64,10 @@ function abortableDelay(ms, signal) {
  */
 function emptyResponseNudge(attempt) {
   const nudges = [
-    'Your previous response was empty. Continue the task, use a tool, or give a final answer.',
-    'The response was empty again. Reply with either a tool call or the final answer as text — never an empty turn.',
-    'Still empty. Do not send an empty message: if the task is finished, write the result now; otherwise call the next tool.',
-    'Empty response repeated. State the next concrete action and call the tool for it, or deliver the final answer.',
+    'Empty response. Continue the task: call the next tool, or write the final answer. Do not restart the analysis.',
+    'The response was empty again. Reply with a tool call or the final answer — never an empty turn, and do not repeat work already done.',
+    'Still empty. Do not re-analyze or re-read anything the worklog already covers: if the task is finished, write the result now; otherwise call the next tool.',
+    'Empty response repeated. State the next concrete action and call the tool for it, or deliver the final answer below.',
   ];
   return nudges[Math.min(Math.max(0, attempt - 1), nudges.length - 1)];
 }
@@ -701,7 +701,7 @@ export class Agent {
           budgetWarned = true;
           messages.push({
             role: 'system',
-            content: `BUDGET: about ${Math.max(0, Math.round((deadline - Date.now()) / 1000))}s of wall clock left. Stop exploring, deliver the smallest correct result, and report what is left.`,
+            content: `BUDGET: about ${Math.max(0, Math.round((deadline - Date.now()) / 1000))}s of wall clock left. Stop exploring and stop re-analyzing known facts: deliver the smallest correct result now and report what is left.`,
           });
           this.#emit('warning', { message: '70% of the time budget is used — asking the model to converge.' });
         }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
 import { Renderer } from '../../src/cli/renderer.js';
+import { displayWidth } from '../../src/cli/width.js';
 
 function capture({ isTTY = false, columns = 60 } = {}) {
   let data = '';
@@ -780,6 +781,38 @@ test('a long diff is bounded and says how many lines were hidden', () => {
   const visible = strip(stdout.getData()).replace(/\r/g, '');
   assert.match(visible, /… \d+ more diff line\(s\)/, 'the rest must be summarised, not dumped');
   assert.ok(!visible.includes('line 39'), 'the diff must stay bounded');
+});
+
+test('clicking a code block copies only its code through OSC 52', () => {
+  const stdout = capture({ isTTY: true, columns: 80 });
+  // A tall terminal keeps the whole transcript in the viewport, so the chip's
+  // absolute row is its screen row.
+  stdout.rows = 200;
+  const renderer = new Renderer({ stdout, stderr: stdout, plain: false, color: true });
+  renderer.setPromptController({
+    metrics: () => ({ active: true, rows: 1, cursorRow: 0 }),
+    repaint: () => {},
+  });
+
+  renderer.contentDelta({ text: 'Here is the fix:\n\n```js\nconst answer = 42;\n```\n' });
+  renderer.answerEnd();
+  assert.match(strip(stdout.getData()), /⧉ copy/, 'the code block shows a copy chip');
+
+  let chipRow = -1;
+  let row = 0;
+  for (const line of renderer.screenLines) {
+    if (chipRow === -1 && line.text.includes('⧉ copy') && line.blockId) chipRow = row;
+    row += Math.max(1, Math.ceil(displayWidth(line.text, { ansi: true }) / stdout.columns));
+  }
+  assert.ok(chipRow >= 0, 'the chip row is tracked as a copy target');
+
+  assert.equal(renderer.handleMouse({ button: 0, x: 2, y: chipRow + 1, release: false }), true);
+  const data = stdout.getData();
+  const start = data.indexOf('\x1b]52;c;') + 7;
+  const end = data.indexOf('\x1b\\', start);
+  assert.ok(start > 6 && end > start, 'the click writes an OSC 52 clipboard sequence');
+  assert.equal(Buffer.from(data.slice(start, end), 'base64').toString('utf8'), 'const answer = 42;');
+  assert.match(strip(data), /Copied 18 chars of js code/);
 });
 
 test('command output streams into the live region while the command runs', async () => {

@@ -252,10 +252,80 @@ Anda percaya.
 | `--doctor` | Diagnostik offline. |
 | `--live` | Bersama `--doctor`: satu permintaan konektivitas nyata. |
 | `--env-file <path>` | Memuat file env tertentu alih-alih `.env`. |
+| `--settings` | Editor pengaturan global baris bernomor (tanpa menjalankan agent). |
+| `--settings --tui` | Editor pengaturan layar penuh (butuh TTY interaktif). |
+| `--settings --list` | Mencetak pengaturan yang bisa diedit lalu keluar. |
 | `--tui` | UI layar penuh retained-mode (butuh TTY interaktif; diabaikan dengan `--plain`). |
 | `--plain` | Output plain, tanpa spinner atau gaya ANSI. |
 | `--no-color` | Menonaktifkan warna. |
 | `--debug` | Log debug dan stack trace. |
+
+### Pengaturan global (`ryuu --settings`)
+
+Selain `.env`, Ryuu menyimpan pengaturan milik pengguna di satu file yang terbaca
+dari direktori kerja mana pun:
+
+```bash
+ryuu --settings            # editor baris bernomor
+ryuu --settings --tui      # editor layar penuh (butuh TTY)
+ryuu --settings --list     # cetak daftar, tanpa masuk mode edit
+ryuu --settings --help     # bantuan khusus pengaturan
+```
+
+Lokasi file mengikuti konvensi platform dan bisa dialihkan dengan
+`RYUU_CONFIG_DIR` (berguna di mesin tanpa home tetap atau di test):
+
+| Platform | Lokasi bawaan |
+| --- | --- |
+| Linux/BSD | `$XDG_CONFIG_HOME/ryuu/config.json` atau `~/.config/ryuu/config.json` |
+| macOS | `~/Library/Application Support/ryuu/config.json` |
+| Windows | `%APPDATA%\ryuu\config.json` |
+
+**Editor baris.** Daftar bernomor menampilkan nilai saat ini, dengan API key
+selalu disamarkan (`••••••••`). Perintahnya: `<nomor> <nilai baru>`, `/list`,
+`/show <nomor>`, `/reset <nomor>` (meminta konfirmasi), `/help`, dan `/exit`.
+Nilai boleh mengandung spasi; semuanya setelah nomor dipertahankan. Setiap
+perubahan divalidasi lalu **langsung disimpan** (read-modify-write), jadi
+terminal yang tertutup mendadak tidak menghilangkan perubahan yang sudah lolos.
+Jika penulisan gagal, editor menyebut nilai itu `NOT saved` dan mempertahankan
+nilai valid terakhir; satu kunci tidak pernah menghapus kunci lain atau properti
+yang tidak dikenal. `/reset` adalah cara mengosongkan kunci rahasia — tidak
+perlu memasukkan placeholder.
+
+**Editor TUI.** `--settings --tui` membuka layar alternatif (bukan agent): daftar
+di kiri/atas, panel deskripsi dan batasan di bawahnya, `↑↓`/`PgUp`/`PgDn` untuk
+navigasi, `←/→` untuk memilih provider dan model katalog (mengetik tetap bisa
+memasukkan id khusus), `Enter` membuka/menyimpan, `Esc` membatalkan edit (dan
+`Esc` lagi keluar), `Ctrl+C` keluar. Raw mode, layar alternatif, dan listener
+selalu dipulihkan saat keluar, termasuk setelah galat; tanpa TTY perintah gagal
+dengan pesan jelas dan tidak pernah menjalankan agent.
+
+**Presedensi** (terkuat lebih dulu): flag CLI (`--provider`, `--model`,
+`--max-steps`) → environment/`.env` → `.ryuu/preferences.json` workspace →
+file pengaturan global → bawaan katalog. Environment yang sudah ada tetap
+menang, sehingga setup lama tidak berubah perilakunya; perubahan file berlaku
+pada run berikutnya. `--settings --list` menandai nilai yang sedang di-override
+environment dengan `!`.
+
+**Provider dan model.** Baris kunci, base URL, dan model dibuat dari katalog
+provider yang sama dengan runtime. Provider tambahan dari `RYUU_PROVIDERS`
+(lihat [Menambah provider sendiri](#menambah-provider-sendiri-ryuu_providers))
+otomatis mendapat barisnya mengikuti `apiKeyEnv` masing-masing.
+
+**Keamanan, backup, dan pemulihan.** File ditulis atomik (file sementara di
+direktori yang sama, fsync, lalu rename) dengan izin `0600` pada POSIX; path yang
+berupa symlink ditolak. JSON yang rusak **tidak pernah ditimpa**: mode
+`--settings` berhenti dengan pesan yang menyebut path-nya, sedangkan startup
+normal hanya memberi peringatan lalu memakai environment/bawaan. Untuk
+memulihkan, perbaiki JSON-nya atau pindahkan file ke samping, lalu jalankan
+`ryuu --settings` lagi. Hanya nilai yang Anda ubah yang ditulis; kunci yang
+tidak ada memakai bawaan. Jangan meng-commit file ini — lokasinya di luar repo,
+tetapi tetap berisi kredensial.
+
+**Pemecahan masalah.** `Permission denied` berarti direktori tidak bisa ditulis:
+arahkan `RYUU_CONFIG_DIR` ke lokasi yang bisa ditulis. Nilai yang ditolak
+menyebut batasannya (mis. `AGENT_MAX_STEPS must be between 0 and 100000`), dan
+kesalahan format JSON menyebut path serta tidak mengubah file.
 
 ### UI layar penuh (`--tui`)
 
@@ -273,6 +343,7 @@ digambar dari model tersebut. Di sinilah perilaku blok menjadi mungkin:
 | Aksi | Hasil |
 | --- | --- |
 | Klik sebuah prompt (`▸ TASK … ⧉ copy`) | Menyalin prompt itu ke clipboard terminal. |
+| Klik sebuah blok kode (header `js … ⧉ copy`) | Menyalin isi blok kode itu — hanya kodenya, tanpa penanda fence — ke clipboard terminal. Berlaku di UI baris maupun `--tui`. |
 | Klik blok reasoning / `run_command` / shell | Menukar keadaan terbuka/tertutup di tempat; setiap blok menyimpan keadaan sendiri, sehingga beberapa bisa tetap terbuka. |
 | `PgUp`, `PgDn`, roda mouse | Menggul transkrip di dalam aplikasi (scrollback terminal sendiri tidak dipakai). |
 | `/expand <id>` | Membuka blok yang sudah tergulir keluar dari tampilan. `/expand` tanpa id mendaftarkannya. |
@@ -310,7 +381,7 @@ diff, pemberitahuan, dan composer — membungkus sesuai lebar terminal alih-alih
 terpotong atau tergulir keluar dari tampilan. Palet naik ke truecolor ketika
 terminal mendukungnya (`--no-color` tetap mematikannya).
 
-Tombol salin (`⧉ copy` di setiap prompt, `Ctrl+Y`, atau `/copy [n]`) menulis teks
+Tombol salin (`⧉ copy` di setiap prompt dan blok kode, `Ctrl+Y`, atau `/copy [n]`) menulis teks
 dengan **OSC 52**, sehingga terminal itulah yang memiliki clipboard: tanpa proses
 anak `pbcopy`/`xclip`/`clip.exe`, dan bisa dipakai lewat SSH. Terminal yang tidak
 menerapkan OSC 52 mengabaikan sekuensnya; status bar tetap melaporkan apa yang
@@ -644,9 +715,10 @@ yang tahan lama.
 
 ## Referensi konfigurasi
 
-Semua pengaturan berasal dari variabel environment (atau `.env`). Nilai bawaan
-divalidasi saat start; nilai tidak valid membuat proses gagal sebelum ada
-panggilan API.
+Pengaturan berasal dari variabel environment (atau `.env`), dan nilai yang tidak
+di-set boleh jatuh ke file pengaturan global (`ryuu --settings`). Environment
+selalu menang. Nilai bawaan divalidasi saat start; nilai tidak valid membuat
+proses gagal sebelum ada panggilan API.
 
 | Variabel | Bawaan | Makna |
 | --- | --- | --- |
