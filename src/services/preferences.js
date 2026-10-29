@@ -220,8 +220,8 @@ export async function removeCustomModel(dir, id, providerId = null) {
 }
 
 /**
- * Apply the persisted `/provider` choice at startup. An explicit flag or
- * RYUU_PROVIDER wins and is never overwritten. Returns true when raw.provider
+ * Apply the persisted `/provider` choice at startup. An explicit flag or a
+ * `provider` key in config.json wins and is never overwritten. Returns true when raw.provider
  * was changed.
  */
 export async function applyPersistedProvider(raw, { flagProvider = null, stateDir = null } = {}) {

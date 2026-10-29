@@ -3,20 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
-import { PACKAGE_ENV_FILE, buildRawConfig, checkRuntime, loadEnvFile } from './config/load.js';
+import { buildRawConfig, checkRuntime } from './config/load.js';
 import { validateConfig } from './config/validate.js';
 import { ConfigError, formatErrorBlock } from './utils/errors.js';
 import { createApp } from './cli/app.js';
 import { formatDoctor, runDoctor } from './services/doctor.js';
 import { createActiveProvider } from './providers/index.js';
-import {
-  SettingsStore,
-  applySettingsToRaw,
-  readSettings,
-  settingsModelFor,
-  settingsProviderId,
-} from './config/settings.js';
+import { SettingsStore, settingsModelFor, settingsProviderId } from './config/settings.js';
 import { buildSettingsRegistry } from './config/settings-registry.js';
+import { buildSettingsSkeleton, ensureSettingsFile } from './config/scaffold.js';
 import { buildProviders, parseExtraProviders } from './providers/catalog.js';
 import { SettingsSession, runSettingsEditor } from './cli/settings-editor.js';
 import { SettingsTui } from './cli/settings-tui.js';
@@ -42,14 +37,13 @@ Options:
   -v, --version             Show the version
       --doctor              Run diagnostics (offline)
       --live                With --doctor: one real API request
-      --workspace <path>    Workspace override (AGENT_WORKSPACE)
-      --provider <id>       Provider override (RYUU_PROVIDER), e.g. tokenharbor
-      --model <id>          Model override for this run (RYUU_MODEL)
+      --workspace <path>    Workspace override for this run
+      --provider <id>       Provider override for this run, e.g. tokenharbor
+      --model <id>          Model override for this run
       --max-steps <n>       Optional step cap (0 = unlimited, default)
   -y, --yes                 Auto-approve file writes (commands still ask)
       --auto-approve        Auto-approve ALL actions incl. commands (AI works without asking)
       --read-only           Deny all writes and command execution
-      --env-file <path>     Load a specific .env file
       --settings            Edit the global settings file and exit
       --settings --tui      Full-screen settings editor (requires a TTY)
       --settings --list     Print the editable settings and exit
@@ -59,10 +53,10 @@ Options:
                             blocks to expand, live composer (requires a TTY)
       --debug               Verbose logs and stack traces
 
-Global settings live in ~/.config/ryuu/config.json (Windows: %APPDATA%\\ryuu,
-macOS: ~/Library/Application Support/ryuu; RYUU_CONFIG_DIR overrides the folder).
-Environment variables and .env still win over the settings file, and a .ryuu
-preferences file for the current workspace wins over it too.
+Every setting lives in one file: ~/.config/ryuu/config.json (Windows:
+%APPDATA%\\ryuu, macOS: ~/Library/Application Support/ryuu; RYUU_CONFIG_DIR
+overrides the folder). CLI flags win for one run, and the .ryuu preferences file
+of the current workspace keeps the last /provider and /model choice.
 
 Commands inside the CLI: /help, /status, /worklog, /files, /tree, /tools,
 /processes, /logs, /expand, /cancel, /history, /sessions, /diff, /undo, /config,
@@ -71,9 +65,10 @@ Commands inside the CLI: /help, /status, /worklog, /files, /tree, /tools,
 A line starting with "!" runs a shell command yourself (same as /bash).
 While a task runs, slash commands still work; a new prompt waits until it ends.
 
-Documentation: README.md · Secrets: provider keys in .env (never commit it).
-Providers: nvidia (NVIDIA_API_KEY), tokenharbor (TOKENHARBOR_API_KEY); list them
-with /provider, or add your own with RYUU_PROVIDERS in .env.
+Documentation: README.md · Secrets: provider keys in config.json, written
+owner-only and never printed. Run ryuu --settings to add them.
+Providers: nvidia, tokenharbor; list them with /provider, or add your own with
+"extraProviders" in config.json.
 `;
 
 const SETTINGS_HELP = `Ryuu Agent CLI — global settings
@@ -93,11 +88,13 @@ Editor commands:
   /exit                        Leave the editor (each change is already saved)
 
 Secrets are always masked in the list and are never shown back.
-The file is created on first save and written atomically with owner-only
-permissions; a malformed file is reported and never overwritten.
+The file is created with every key empty on first run (or first save) and
+written atomically with owner-only permissions; a malformed file is reported
+and never overwritten.
 
-Precedence: CLI flags > environment/.env > workspace .ryuu preferences >
-global settings file > built-in defaults.
+Precedence: CLI flags > workspace .ryuu preferences > config.json > built-in
+defaults. Environment variables are not read (RYUU_CONFIG_DIR only sets where
+this file lives).
 `;
 
 /** Parse argv into options plus a positional task. */
@@ -150,9 +147,6 @@ export function parseArgs(argv) {
         break;
       case '--max-steps':
         options.maxSteps = value();
-        break;
-      case '--env-file':
-        options.envFile = value();
         break;
       case '-y':
       case '--yes':
@@ -217,15 +211,16 @@ function applyOverrides(raw, options) {
   return raw;
 }
 
-/** Providers available to the settings editor (built-ins plus RYUU_PROVIDERS). */
-function settingsProviders(env) {
+/** Providers available to the settings editor (built-ins plus extraProviders). */
+function settingsProviders(settings) {
+  const raw = buildRawConfig(settings);
   let extras = [];
   try {
-    extras = parseExtraProviders(env.RYUU_PROVIDERS, []);
+    extras = parseExtraProviders(raw.extraProviders, []);
   } catch {
     extras = [];
   }
-  return buildProviders({ env, extras });
+  return buildProviders({ credentials: raw.providerCredentials, extras });
 }
 
 /**
@@ -235,11 +230,10 @@ function settingsProviders(env) {
  * tools, no provider client and no model request are created here.
  */
 async function runSettingsMode(options) {
-  const env = process.env;
-  const store = new SettingsStore({ env });
+  const store = new SettingsStore();
   const { data, exists } = await store.read();
-  const providers = settingsProviders(env);
-  const makeRegistry = (current) => buildSettingsRegistry({ providers, settings: current, env });
+  const makeRegistry = (current) =>
+    buildSettingsRegistry({ providers: settingsProviders(current), settings: current });
 
   if (options.list) {
     const session = new SettingsSession({ store, makeRegistry, data, file: store.file });
@@ -248,8 +242,9 @@ async function runSettingsMode(options) {
   }
 
   // A missing file is initialized before the editor opens, so an immediate exit
-  // still leaves a private (0600) settings file behind instead of nothing.
-  if (!exists) await store.save(data);
+  // still leaves a private (0600) settings file behind instead of nothing. The
+  // scaffold lists every editable key with an empty value.
+  if (!exists) await store.save(buildSettingsSkeleton());
 
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (!interactive) {
@@ -312,15 +307,6 @@ export async function main(argv = process.argv.slice(2)) {
     return 2;
   }
 
-  try {
-    // Project-local .env wins; the installed CLI's .env fills in the key when
-    // `ryuu` is run from an unrelated folder.
-    loadEnvFile({ envFile: options.envFile, fallbackFile: PACKAGE_ENV_FILE });
-  } catch (error) {
-    process.stderr.write(`${formatErrorBlock(error)}\n`);
-    return 2;
-  }
-
   // Settings mode never builds the agent, tools or a provider: it only reads
   // and writes the global settings file.
   if (options.settings) {
@@ -332,39 +318,36 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
-  // The global settings file is a lower-precedence default: a malformed file
-  // warns and is left untouched instead of blocking the agent.
+  // config.json is the only configuration source. A missing file is created
+  // with every key present but empty, so a new install has something to edit; a
+  // malformed file warns and is left untouched, and the resulting "no API key"
+  // error points at --settings.
   let settings = null;
   try {
-    settings = (await readSettings()).data;
+    settings = (await ensureSettingsFile()).data;
   } catch (error) {
     process.stderr.write(`[warn] ${error.message}\n`);
   }
 
   let config;
   try {
-    const raw = applyOverrides(buildRawConfig(process.env, { cwd: process.cwd() }), options);
-    if (settings) applySettingsToRaw(raw, settings);
+    const raw = applyOverrides(buildRawConfig(settings ?? {}, { cwd: process.cwd() }), options);
     // A provider/model picked with /provider and /model is persisted under
-    // <workspace>/.ryuu and wins over env defaults on later runs; explicit
+    // <workspace>/.ryuu and wins over config.json on later runs; explicit
     // --provider/--model flags win for a single run and never rewrite the
-    // saved choice. The global settings file is the last fallback before the
-    // catalog defaults.
+    // saved choice. config.json is the fallback before the catalog defaults.
+    const storedProvider = settings ? settingsProviderId(settings) : null;
+    raw.provider = options.provider || null;
+    raw.model = null;
     const stateDir = stateDirFor(raw.workspace);
     await applyPersistedProvider(raw, { flagProvider: options.provider, stateDir });
-    if (!raw.provider && settings) {
-      const storedProvider = settingsProviderId(settings);
-      if (storedProvider) raw.provider = storedProvider;
-    }
+    if (!raw.provider) raw.provider = storedProvider;
     await applyPersistedModel(raw, {
       flagModel: options.model,
       stateDir,
       providerId: raw.provider || null,
     });
-    if (!raw.model && settings && raw.provider) {
-      const storedModel = settingsModelFor(settings, raw.provider);
-      if (storedModel) raw.model = storedModel;
-    }
+    if (!raw.model && settings && raw.provider) raw.model = settingsModelFor(settings, raw.provider);
     const result = validateConfig(raw, { requireApiKey: !options.doctor, cwd: process.cwd() });
     config = result.config;
     for (const warning of result.warnings) process.stderr.write(`[warn] ${warning}\n`);

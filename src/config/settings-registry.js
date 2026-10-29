@@ -20,37 +20,59 @@ const WEB_PROVIDER_IDS = ['serper', 'you', 'firecrawl', 'duckduckgo', 'tavily'];
 const PLACEHOLDER_KEY = /^(your[_-]?.*api[_-]?key|changeme|replace[_-]?me|<.*>)$/i;
 
 const AGENT_META = {
-  maxSteps: { env: 'AGENT_MAX_STEPS', description: 'Optional cap on agent steps per task (0 = unlimited).' },
-  maxOutputTokens: { env: 'AGENT_MAX_OUTPUT_TOKENS', description: 'Maximum tokens the model may emit per response.' },
-  requestTimeoutMs: { env: 'AGENT_REQUEST_TIMEOUT_MS', description: 'Timeout for one model request, in milliseconds.' },
-  streamIdleTimeoutMs: { env: 'AGENT_STREAM_IDLE_TIMEOUT_MS', description: 'Abort a response stream idle for this long (0 disables).' },
-  maxRetries: { env: 'AGENT_MAX_RETRIES', description: 'Transport retries per model request.' },
-  maxRecoveryAttempts: { env: 'AGENT_MAX_RECOVERY_ATTEMPTS', description: 'Heartbeat reconnect attempts after a provider failure (0 = unlimited).' },
-  recoveryBackoffMs: { env: 'AGENT_RECOVERY_BACKOFF_MS', description: 'First heartbeat reconnect delay, in milliseconds.' },
-  maxFileBytes: { env: 'AGENT_MAX_FILE_BYTES', description: 'Largest file read in full, in bytes.' },
-  maxSearchResults: { env: 'AGENT_MAX_SEARCH_RESULTS', description: 'Maximum matches returned by search_files.' },
-  maxToolOutputBytes: { env: 'AGENT_MAX_TOOL_OUTPUT_BYTES', description: 'Maximum captured tool/command output, in bytes.' },
-  maxTaskDurationMs: { env: 'AGENT_MAX_TASK_DURATION_MS', description: 'Wall-clock budget for one task, in milliseconds.' },
-  maxContextChars: { env: 'AGENT_MAX_CONTEXT_CHARS', description: 'Local context budget before older exchanges are compacted.' },
+  maxSteps: { description: 'Optional cap on agent steps per task (0 = unlimited).' },
+  maxOutputTokens: { description: 'Maximum tokens the model may emit per response.' },
+  requestTimeoutMs: { description: 'Timeout for one model request, in milliseconds.' },
+  streamIdleTimeoutMs: { description: 'Abort a response stream idle for this long (0 disables).' },
+  maxRetries: { description: 'Transport retries per model request.' },
+  maxRecoveryAttempts: { description: 'Heartbeat reconnect attempts after a provider failure (0 = unlimited).' },
+  recoveryBackoffMs: { description: 'First heartbeat reconnect delay, in milliseconds.' },
+  maxFileBytes: { description: 'Largest file read in full, in bytes.' },
+  maxSearchResults: { description: 'Maximum matches returned by search_files.' },
+  maxToolOutputBytes: { description: 'Maximum captured tool/command output, in bytes.' },
+  maxTaskDurationMs: { description: 'Wall-clock budget for one task, in milliseconds.' },
+  maxContextChars: { description: 'Local context budget before older exchanges are compacted.' },
   approvalPolicy: {
-    env: 'AGENT_APPROVAL_POLICY',
     description: 'Approval gate: ask for every change, auto-approve writes, or deny all writes and commands.',
     choices: APPROVAL_POLICIES,
     default: 'ask',
   },
   logLevel: {
-    env: 'LOG_LEVEL',
     description: 'Log verbosity.',
     choices: LOG_LEVELS,
     default: 'info',
   },
+  allowShell: {
+    description: 'Allow shell syntax in run_command after explicit approval. Not a sandbox.',
+    boolean: true,
+  },
+  debug: { description: 'Verbose logs and stack traces.', boolean: true },
+  historyDir: { description: 'Session history directory, relative to the workspace (empty uses .ryuu/sessions).' },
+  logDir: { description: 'Log directory, relative to the workspace (empty uses .ryuu/logs).' },
 };
 
+const WEB_BOOLEAN_KEYS = ['enabled', 'fallback', 'debug', 'duckduckgoEnabled'];
+
 const WEB_META = {
-  serperApiKey: { env: 'SEARCH_API_KEY', description: 'Serper API key for web_search (optional).' },
-  youApiKey: { env: 'YDC_API_KEY', description: 'You.com API key for web_search (optional).' },
-  firecrawlApiKey: { env: 'FIRECRAWL_API_KEY', description: 'Firecrawl API key for web_search (optional).' },
-  tavilyApiKey: { env: 'TAVILY_API_KEY', description: 'Tavily API key for web_search (optional).' },
+  serperApiKey: { description: 'Serper API key for web_search (optional).' },
+  youApiKey: { description: 'You.com API key for web_search (optional).' },
+  firecrawlApiKey: { description: 'Firecrawl API key for web_search (optional).' },
+  tavilyApiKey: { description: 'Tavily API key for web_search (optional).' },
+  endpoint: { description: 'Serper-compatible search endpoint.', type: 'url' },
+  authHeader: {
+    description: 'Header that carries the Serper-compatible search key.',
+    choices: ['X-API-KEY', 'Authorization'],
+    default: 'X-API-KEY',
+  },
+  enabled: { description: 'Register the web_search tool at all.', boolean: true, default: true },
+  fallback: { description: 'Fall back to the next web search provider when one fails.', boolean: true, default: true },
+  debug: { description: 'Extra web search diagnostics in the log (never prints keys).', boolean: true },
+  duckduckgoEnabled: {
+    description: 'Enable the local DuckDuckGo MCP server (runs third-party code via uvx).',
+    boolean: true,
+  },
+  duckduckgoCommand: { description: 'Command used to start the DuckDuckGo MCP server (default: uvx).' },
+  duckduckgoArgs: { description: 'Arguments for the DuckDuckGo MCP command (default: free-search-mcp).' },
 };
 
 function ok(value, warning = null) {
@@ -150,7 +172,6 @@ function descriptor(entry) {
     secret: false,
     type: 'text',
     choices: null,
-    envVar: null,
     min: null,
     max: null,
     defaultValue: null,
@@ -164,26 +185,27 @@ function descriptor(entry) {
  * `providers` comes from the provider catalog (`buildProviders`), so user-added
  * providers get their own key/base URL/model entries without a parallel list.
  */
-export function buildSettingsRegistry({ providers = [], settings = {}, customModels = {}, env = {} } = {}) {
+export function buildSettingsRegistry({ providers = [], settings = {}, customModels = {} } = {}) {
   const entries = [];
   const providerIds = providers.map((provider) => provider.id);
 
   entries.push(
     descriptor({
       key: 'provider',
-      label: 'DEFAULT_PROVIDER',
+      label: 'provider',
       description: 'Provider used by default. "auto" picks the first provider with a key (NVIDIA preferred).',
       type: 'provider',
       value: settingsProviderId(settings),
       choices: ['auto', ...providerIds],
-      envVar: 'RYUU_PROVIDER',
       validate: (value) => validateProvider(value, providerIds),
     }),
   );
 
   for (const provider of providers) {
     const stored = settings.providers?.[provider.id] || {};
-    const upper = provider.id.toUpperCase();
+    const keyPath = `providers.${provider.id}.apiKey`;
+    const urlPath = `providers.${provider.id}.baseURL`;
+    const modelPath = `providerModel.${provider.id}`;
     const modelChoices = [
       ...new Set([
         ...(provider.models || []).map((entry) => entry.id),
@@ -192,61 +214,99 @@ export function buildSettingsRegistry({ providers = [], settings = {}, customMod
     ];
     entries.push(
       descriptor({
-        key: `providers.${provider.id}.apiKey`,
-        label: provider.apiKeyEnv || `${upper}_API_KEY`,
+        key: keyPath,
+        label: keyPath,
         description: `API key for ${provider.name}${provider.docsUrl ? ` — ${provider.docsUrl}` : ''}. Masked in every list and written owner-only.`,
         type: 'secret',
         secret: true,
         value: typeof stored.apiKey === 'string' ? stored.apiKey : '',
-        envVar: provider.apiKeyEnv,
         validate: validateSecret,
       }),
     );
     entries.push(
       descriptor({
-        key: `providers.${provider.id}.baseURL`,
-        label: provider.baseUrlEnv || `${upper}_BASE_URL`,
+        key: urlPath,
+        label: urlPath,
         description: `Base URL for ${provider.name}. Empty uses ${provider.baseURL}.`,
         type: 'url',
         value: typeof stored.baseURL === 'string' ? stored.baseURL : '',
         defaultValue: provider.baseURL,
-        envVar: provider.baseUrlEnv,
         validate: (value) => validateUrl(value, 'Base URL'),
       }),
     );
     entries.push(
       descriptor({
-        key: `providerModel.${provider.id}`,
-        label: `MODEL[${provider.id}]`,
+        key: modelPath,
+        label: modelPath,
         description: `Model used with ${provider.name}. Empty uses ${provider.defaultModel}.`,
         type: 'model',
         value: settingsModelFor(settings, provider.id),
         defaultValue: provider.defaultModel,
         choices: modelChoices,
-        envVar: provider.modelEnv || null,
         validate: (value) => validateModel(value, { providerId: provider.id, choices: modelChoices }),
       }),
     );
   }
 
+  const pushBoolean = (field, meta) => {
+    const fallback = meta.default ?? false;
+    entries.push(
+      descriptor({
+        key: field,
+        label: field,
+        description: meta.description,
+        type: 'enum',
+        choices: ['true', 'false'],
+        value: getSetting(settings, field) ?? fallback,
+        defaultValue: fallback,
+        validate: (value) => {
+          const text = String(value ?? '').trim().toLowerCase();
+          if (text === 'true') return ok(true);
+          if (text === 'false') return ok(false);
+          return fail(`${field} must be true or false.`);
+        },
+      }),
+    );
+  };
+
+  const pushInteger = (field, limits, description) => {
+    const [min, max, fallback] = limits;
+    entries.push(
+      descriptor({
+        key: field,
+        label: field,
+        description,
+        type: 'integer',
+        min,
+        max,
+        value: getSetting(settings, field) ?? fallback,
+        defaultValue: fallback,
+        validate: (value) => validateInteger(value, { min, max, label: field }),
+      }),
+    );
+  };
+
   for (const key of Object.keys(AGENT_META)) {
     const meta = AGENT_META[key];
     const field = `agent.${key}`;
+    if (meta.boolean) {
+      pushBoolean(field, meta);
+      continue;
+    }
     if (meta.choices) {
       entries.push(
         descriptor({
           key: field,
-          label: meta.env,
+          label: field,
           description: meta.description,
           type: 'enum',
           choices: meta.choices,
           value: getSetting(settings, field) ?? meta.default,
           defaultValue: meta.default,
-          envVar: meta.env,
           validate: (value) => {
             const text = String(value ?? '').trim().toLowerCase();
             if (!meta.choices.includes(text)) {
-              return fail(`${meta.env} must be one of ${meta.choices.join(', ')}.`);
+              return fail(`${field} must be one of ${meta.choices.join(', ')}.`);
             }
             return ok(text);
           },
@@ -255,90 +315,117 @@ export function buildSettingsRegistry({ providers = [], settings = {}, customMod
       continue;
     }
     const limits = CONFIG_LIMITS[key];
-    if (!limits) continue;
-    const [min, max, fallback] = limits;
+    if (limits) {
+      pushInteger(field, limits, meta.description);
+      continue;
+    }
     entries.push(
       descriptor({
         key: field,
-        label: meta.env,
+        label: field,
         description: meta.description,
-        type: 'integer',
-        min,
-        max,
-        value: getSetting(settings, field) ?? fallback,
-        defaultValue: fallback,
-        envVar: meta.env,
-        validate: (value) => validateInteger(value, { min, max, label: meta.env }),
+        type: 'text',
+        value: getSetting(settings, field) ?? '',
+        validate: (value) => validateText(value),
       }),
     );
   }
 
   for (const [key, meta] of Object.entries(WEB_META)) {
+    const field = `webSearch.${key}`;
+    if (WEB_BOOLEAN_KEYS.includes(key)) {
+      pushBoolean(field, meta);
+      continue;
+    }
+    if (meta.choices) {
+      entries.push(
+        descriptor({
+          key: field,
+          label: field,
+          description: meta.description,
+          type: 'enum',
+          choices: meta.choices,
+          value: getSetting(settings, field) ?? meta.default,
+          defaultValue: meta.default,
+          validate: (value) => {
+            const text = String(value ?? '').trim();
+            const match = meta.choices.find((choice) => choice.toLowerCase() === text.toLowerCase());
+            return match ? ok(match) : fail(`${field} must be one of ${meta.choices.join(', ')}.`);
+          },
+        }),
+      );
+      continue;
+    }
+    if (meta.type === 'url') {
+      entries.push(
+        descriptor({
+          key: field,
+          label: field,
+          description: meta.description,
+          type: 'url',
+          value: getSetting(settings, field) ?? '',
+          defaultValue: 'https://google.serper.dev/search',
+          validate: (value) => validateUrl(value, field),
+        }),
+      );
+      continue;
+    }
+    if (key.endsWith('ApiKey')) {
+      entries.push(
+        descriptor({
+          key: field,
+          label: field,
+          description: meta.description,
+          type: 'secret',
+          secret: true,
+          value: getSetting(settings, field) ?? '',
+          validate: validateSecret,
+        }),
+      );
+      continue;
+    }
     entries.push(
       descriptor({
-        key: `webSearch.${key}`,
-        label: meta.env,
+        key: field,
+        label: field,
         description: meta.description,
-        type: 'secret',
-        secret: true,
-        value: getSetting(settings, `webSearch.${key}`) ?? '',
-        envVar: meta.env,
-        validate: validateSecret,
+        type: 'text',
+        value: getSetting(settings, field) ?? '',
+        validate: (value) => validateText(value),
       }),
     );
   }
-  const resultsLimits = CONFIG_LIMITS.webSearchResults;
-  entries.push(
-    descriptor({
-      key: 'webSearch.results',
-      label: 'WEB_SEARCH_RESULTS',
-      description: 'Results requested per web search.',
-      type: 'integer',
-      min: resultsLimits[0],
-      max: resultsLimits[1],
-      value: getSetting(settings, 'webSearch.results') ?? resultsLimits[2],
-      defaultValue: resultsLimits[2],
-      envVar: 'WEB_SEARCH_RESULTS',
-      validate: (value) =>
-        validateInteger(value, { min: resultsLimits[0], max: resultsLimits[1], label: 'WEB_SEARCH_RESULTS' }),
-    }),
-  );
-  const timeoutLimits = CONFIG_LIMITS.webSearchTimeoutMs;
-  entries.push(
-    descriptor({
-      key: 'webSearch.timeoutMs',
-      label: 'WEB_SEARCH_TIMEOUT_MS',
-      description: 'Timeout for one web search request, in milliseconds.',
-      type: 'integer',
-      min: timeoutLimits[0],
-      max: timeoutLimits[1],
-      value: getSetting(settings, 'webSearch.timeoutMs') ?? timeoutLimits[2],
-      defaultValue: timeoutLimits[2],
-      envVar: 'WEB_SEARCH_TIMEOUT_MS',
-      validate: (value) =>
-        validateInteger(value, { min: timeoutLimits[0], max: timeoutLimits[1], label: 'WEB_SEARCH_TIMEOUT_MS' }),
-    }),
-  );
+  pushInteger('webSearch.results', CONFIG_LIMITS.webSearchResults, 'Results requested per web search.');
+  pushInteger('webSearch.timeoutMs', CONFIG_LIMITS.webSearchTimeoutMs, 'Timeout for one web search request, in milliseconds.');
+  pushInteger('webSearch.mcpTimeoutMs', CONFIG_LIMITS.webMcpTimeoutMs, 'Timeout for one MCP web search call, in milliseconds.');
+  pushInteger('webSearch.mcpMaxRetries', CONFIG_LIMITS.webMcpMaxRetries, 'Bounded retries for transient MCP web search failures.');
   const defaultOrder = ['you', 'firecrawl', 'duckduckgo', 'tavily'];
   entries.push(
     descriptor({
       key: 'webSearch.providers',
-      label: 'WEB_SEARCH_PROVIDERS',
+      label: 'webSearch.providers',
       description: 'Web search providers tried in order. Comma-separated; "none" disables all.',
       type: 'list',
       choices: WEB_PROVIDER_IDS,
       value: getSetting(settings, 'webSearch.providers') ?? defaultOrder,
       defaultValue: defaultOrder,
-      envVar: 'WEB_SEARCH_PROVIDERS',
+      validate: validateWebProviderList,
+    }),
+  );
+  entries.push(
+    descriptor({
+      key: 'webSearch.disabled',
+      label: 'webSearch.disabled',
+      description: 'Web search providers to skip even when listed in the order.',
+      type: 'list',
+      choices: WEB_PROVIDER_IDS,
+      value: getSetting(settings, 'webSearch.disabled') ?? [],
+      defaultValue: [],
       validate: validateWebProviderList,
     }),
   );
 
-  return entries.map((entry) => ({
-    ...entry,
-    // An env var that is already set beats the file, so the editor can say so.
-    envOverride: Boolean(entry.envVar && env[entry.envVar]),
-  }));
+  return entries;
 }
 
 /** Look a setting up by 1-based list number or by key/label (case-insensitive). */
@@ -388,7 +475,6 @@ export function describeSetting(entry) {
   if (!entry.secret && entry.defaultValue !== null && entry.defaultValue !== undefined && entry.defaultValue !== '') {
     bits.push(`default: ${formatDefault(entry)}`);
   }
-  if (entry.envVar) bits.push(`${entry.envVar} wins over this file when set`);
   return bits.join(' · ');
 }
 

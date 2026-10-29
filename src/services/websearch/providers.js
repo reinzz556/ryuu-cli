@@ -7,7 +7,7 @@
  * returns, so a provider that changes its tool set keeps working.
  *
  * API keys are optional where the service allows keyless use. They are read
- * from the environment and placed in request headers, never in a URL or log.
+ * from config.json and placed in request headers, never in a URL or log.
  */
 
 import { createSerperProvider } from './serper.js';
@@ -21,7 +21,7 @@ export const PROVIDER_INFO = {
     label: 'Serper',
     transport: 'https',
     requiresKey: true,
-    keyEnv: 'SEARCH_API_KEY',
+    keySetting: 'webSearch.serperApiKey',
     docs: 'https://serper.dev',
     note: 'Serper-compatible SERP REST API (pre-existing backend).',
   },
@@ -29,7 +29,7 @@ export const PROVIDER_INFO = {
     label: 'You.com',
     transport: 'streamable-http',
     requiresKey: false,
-    keyEnv: 'YDC_API_KEY',
+    keySetting: 'webSearch.youApiKey',
     docs: 'https://you.com/docs/agents/mcp-server',
     note: 'Free profile is keyless and search-only; a key adds contents/discovery tools.',
   },
@@ -37,7 +37,7 @@ export const PROVIDER_INFO = {
     label: 'Firecrawl',
     transport: 'streamable-http',
     requiresKey: false,
-    keyEnv: 'FIRECRAWL_API_KEY',
+    keySetting: 'webSearch.firecrawlApiKey',
     docs: 'https://docs.firecrawl.dev/mcp-server/keyless',
     note: 'Keyless search + scrape with a daily credit cap; a key raises limits.',
   },
@@ -45,7 +45,7 @@ export const PROVIDER_INFO = {
     label: 'DuckDuckGo',
     transport: 'stdio',
     requiresKey: false,
-    keyEnv: null,
+    keySetting: null,
     docs: 'https://github.com/sweetcornna/free-search-mcp',
     note: 'Local community server (MIT). Disabled by default: it runs third-party code and needs uv/uvx.',
   },
@@ -53,7 +53,7 @@ export const PROVIDER_INFO = {
     label: 'Tavily',
     transport: 'streamable-http',
     requiresKey: true,
-    keyEnv: 'TAVILY_API_KEY',
+    keySetting: 'webSearch.tavilyApiKey',
     docs: 'https://docs.tavily.com/documentation/mcp',
     note: 'Agent-oriented search and extraction; API key required by the remote MCP endpoint.',
   },
@@ -94,7 +94,7 @@ export function buildProviders(config = {}, { fetch = null } = {}) {
         // With a key the default tool allowlist includes you-contents; without
         // one the free profile is search-only (confirmed by discovery).
         capabilities: { search: true, extract: Boolean(apiKey) },
-        keyEnv: 'YDC_API_KEY',
+        keySetting: 'webSearch.youApiKey',
       });
       continue;
     }
@@ -113,7 +113,7 @@ export function buildProviders(config = {}, { fetch = null } = {}) {
         enabled: !disabled.has('firecrawl'),
         authenticated: Boolean(apiKey),
         capabilities: { search: true, extract: true },
-        keyEnv: 'FIRECRAWL_API_KEY',
+        keySetting: 'webSearch.firecrawlApiKey',
       });
       continue;
     }
@@ -135,7 +135,7 @@ export function buildProviders(config = {}, { fetch = null } = {}) {
         configured: Boolean(command),
         enabled: Boolean(config.duckduckgoMcpEnabled) && !disabled.has('duckduckgo'),
         capabilities: { search: true, extract: true },
-        keyEnv: null,
+        keySetting: null,
       });
       continue;
     }
@@ -154,7 +154,7 @@ export function buildProviders(config = {}, { fetch = null } = {}) {
         enabled: !disabled.has('tavily'),
         authenticated: Boolean(apiKey),
         capabilities: { search: true, extract: true },
-        keyEnv: 'TAVILY_API_KEY',
+        keySetting: 'webSearch.tavilyApiKey',
       });
     }
   }
@@ -173,6 +173,6 @@ export function describeProvider(provider) {
     requiresKey: provider.requiresKey,
     authenticated: Boolean(provider.authenticated),
     capabilities: { ...provider.capabilities },
-    keyEnv: provider.keyEnv || null,
+    keySetting: provider.keySetting || null,
   };
 }

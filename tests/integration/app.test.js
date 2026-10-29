@@ -319,6 +319,7 @@ test('/model lists the catalog and switches by number, rejecting raw ids', async
     assert.match(listing, /google\/diffusiongemma-26b-a4b-it/);
     assert.match(listing, /poolside\/laguna-xs-2\.1/);
     assert.match(listing, /stepfun-ai\/step-5-preview/);
+    assert.match(listing, /6 {2}minimaxai\/minimax-m3\.1-flash/, 'the default model is listed 6th');
     assert.match(listing, /← current/);
     assert.match(listing, /Usage: \/model <n>/);
 
@@ -348,7 +349,7 @@ test('/model lists the catalog and switches by number, rejecting raw ids', async
 
     ctx.stdout.reset();
     await run('99');
-    assert.match(ctx.stdout.getData(), /Unknown model number: 99\. Valid: 1-5/);
+    assert.match(ctx.stdout.getData(), /Unknown model number: 99\. Valid: 1-6/);
   } finally {
     await ctx.cleanup();
   }

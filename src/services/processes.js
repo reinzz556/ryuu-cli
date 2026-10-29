@@ -98,7 +98,7 @@ export class ProcessManager extends EventEmitter {
 
     const useShell = Boolean(shellCommand);
     if (useShell && !allowShell) {
-      throw new ProcessError('Shell execution is disabled. Set AGENT_ALLOW_SHELL=true to permit an approved shell command.');
+      throw new ProcessError('Shell execution is disabled. Set agent.allowShell=true in config.json to permit an approved shell command.');
     }
     let command;
     let args;

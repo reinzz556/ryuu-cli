@@ -73,11 +73,9 @@ export class SettingsSession {
     ];
     this.entries.forEach((entry, index) => {
       const label = entry.label.padEnd(width);
-      const flag = entry.envOverride ? ' !' : '';
-      lines.push(`  ${String(index + 1).padEnd(3)} ${label} ${truncate(formatSettingValue(entry), 56)}${flag}`);
+      lines.push(`  ${String(index + 1).padEnd(3)} ${label} ${truncate(formatSettingValue(entry), 56)}`);
     });
     lines.push('');
-    lines.push('! = an environment variable is set and wins over this file.');
     lines.push('Enter a number and a new value. Format: <number> <value>');
     lines.push('Type /help for commands, /exit to leave (each change is saved immediately).');
     return lines;
@@ -94,7 +92,6 @@ export class SettingsSession {
     ];
     const constraints = describeSetting(entry);
     if (constraints) lines.push(`  ${constraints}`);
-    if (entry.envOverride) lines.push(`  ! ${entry.envVar} is set in the environment and wins over this file.`);
     lines.push('  use: /reset ' + this.#indexOf(entry) + ' to restore the default');
     return lines;
   }

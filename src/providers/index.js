@@ -28,8 +28,8 @@ export const providerRegistry = new ProviderRegistry({
 /**
  * Create the provider instance for an already validated config.
  *
- * `RYUU_PROVIDERS` entries are registered on first use, which is why a provider
- * added in `.env` needs no code change.
+ * `extraProviders` entries are registered on first use, which is why a provider
+ * added in config.json needs no code change.
  */
 export function createActiveProvider(config, deps = {}) {
   const id = normalizeProviderId(config.providerId) || DEFAULT_PROVIDER_ID;
@@ -54,7 +54,7 @@ export function selectionFor(config, providerId, { model = null } = {}) {
   }
   if (!descriptor.apiKey) {
     throw new ProviderError(
-      `${descriptor.apiKeyEnv} is not set for provider ${descriptor.id}. Add it to .env (or export it) before switching.`,
+      `Provider ${descriptor.id} has no API key. Add your key to config.json with \`ryuu --settings\` (${descriptor.apiKeyPath}) before switching.`,
       { code: 'AUTH_MISSING' },
     );
   }
@@ -69,7 +69,7 @@ export function selectionFor(config, providerId, { model = null } = {}) {
   return {
     providerId: descriptor.id,
     providerName: descriptor.name,
-    apiKeyEnv: descriptor.apiKeyEnv,
+    apiKeyPath: descriptor.apiKeyPath,
     docsUrl: descriptor.docsUrl || null,
     baseURL: descriptor.baseURL,
     apiKey: descriptor.apiKey,

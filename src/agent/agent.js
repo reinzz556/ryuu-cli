@@ -248,7 +248,7 @@ export class Agent {
     this.#boundConversation();
   }
 
-  /** Keep memory inside half of AGENT_MAX_CONTEXT_CHARS so a task still fits. */
+  /** Keep memory inside half of agent.maxContextChars so a task still fits. */
   #boundConversation() {
     const budget = Math.max(2000, Math.floor(Number(this.config.maxContextChars) / 2));
     while (this.conversation.length > 4 && conversationChars(this.conversation) > budget) {
@@ -621,7 +621,7 @@ export class Agent {
     }
     const signal = controller.signal;
 
-    // Steps are unlimited by default; AGENT_MAX_STEPS > 0 adds an optional cap.
+    // Steps are unlimited by default; agent.maxSteps > 0 adds an optional cap.
     const stepLimit = Number(this.config.maxSteps) > 0 ? this.config.maxSteps : Infinity;
     const stepLimitLabel = Number.isFinite(stepLimit) ? stepLimit : null;
 
@@ -679,7 +679,7 @@ export class Agent {
       if (signal.aborted) throw new CancelledError('Task cancelled by user.');
       if (Date.now() > deadline) {
         throw new RyuuError(
-          `Task exceeded the ${Math.round(this.config.maxTaskDurationMs / 1000)}s time limit. Increase AGENT_MAX_TASK_DURATION_MS or split the task.`,
+          `Task exceeded the ${Math.round(this.config.maxTaskDurationMs / 1000)}s time limit. Increase agent.maxTaskDurationMs or split the task.`,
           { code: 'TASK_TIMEOUT' },
         );
       }
@@ -788,7 +788,7 @@ export class Agent {
         session.tokenUsage.total = session.tokenUsage.prompt + session.tokenUsage.completion;
 
         if (truncated) {
-          const issue = 'The model response hit AGENT_MAX_OUTPUT_TOKENS and was cut off; the truncated tool call was discarded instead of executed.';
+          const issue = 'The model response hit agent.maxOutputTokens and was cut off; the truncated tool call was discarded instead of executed.';
           if (!session.issues.includes(issue)) session.issues.push(issue);
           this.#emit('warning', {
             message: 'Response truncated at the output-token cap — the incomplete tool call was NOT executed.',
@@ -1108,7 +1108,7 @@ export class Agent {
       if (!finished && status !== 'completed') {
         status = 'step-limit';
         session.issues.push(`Reached the ${stepLimitLabel}-step limit before the model gave a final answer.`);
-        finalText = `Step limit (${stepLimitLabel}) reached. Partial work is recorded above; raise AGENT_MAX_STEPS (0 = unlimited) or continue with a narrower task.`;
+        finalText = `Step limit (${stepLimitLabel}) reached. Partial work is recorded above; raise agent.maxSteps (0 = unlimited) or continue with a narrower task.`;
       }
     } catch (caught) {
       error = caught;

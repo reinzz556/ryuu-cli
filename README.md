@@ -20,7 +20,7 @@ dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
   │                 autonomous coding intelligence · NVIDIA                  │
   │                                                                          │
   ├─ ◆ TELEMETRY ────────────────────────────────────────────────────────────┤
-  │ model      nvidia/nemotron-3.5-super-vl-120b-a12b                       │
+  │ model      minimaxai/minimax-m3.1-flash                                 │
   │ workspace  /path/to/your/project                                         │
   │ runtime    Node.js v25.x · linux                                         │
   │ access     ask · shell is not a sandbox                                  │
@@ -36,7 +36,7 @@ dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 - **Loop agent yang eksplisit** — model → tool call tervalidasi → persetujuan →
   eksekusi nyata → hasil tool → model, sampai ada jawaban akhir, pembatalan, atau
   batas durasi tugas. Jumlah langkah tidak dibatasi secara bawaan;
-  `AGENT_MAX_STEPS` menambahkan batas opsional.
+  `agent.maxSteps` menambahkan batas opsional.
 - **Tool workspace yang nyata** — list, tree, read, search, file info, diff,
   create, edit, write, move, delete, inspeksi Git, dan ringkasan project.
 - **Manajer proses** — menjalankan command dengan stdout/stderr asli, exit code,
@@ -63,7 +63,7 @@ dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 - **Tanpa batas retry buatan** — koneksi provider yang putus atau giliran model
   kosong akan dicoba ulang dengan heartbeat di layar dan backoff eksponensial
   sampai model menjawab, tenggat tugas lewat, atau Anda membatalkan. Giliran
-  kosong tidak pernah mengakhiri tugas dengan galat; `AGENT_MAX_RECOVERY_ATTEMPTS`
+  kosong tidak pernah mengakhiri tugas dengan galat; `agent.maxRecoveryAttempts`
   tetap bisa memasang batas keras.
 - **Composer tetap bisa dipakai saat run** — prompt digambar di bawah wilayah
   aktivitas live dan dicetak ulang di setiap baris yang dialirkan, jadi slash
@@ -117,7 +117,7 @@ dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 | npm | 10+ (sudah menyertai Node 25). |
 | OS | Linux, macOS, atau Windows. Perilaku pensinyalan proses berbeda di Windows; lihat [Perilaku proses](#perilaku-proses). |
 | Jaringan | Dibutuhkan untuk panggilan model langsung. Git opsional dan hanya dipakai untuk `/diff` dan `inspect_git`. |
-| Kunci provider | Dibutuhkan untuk panggilan langsung: `NVIDIA_API_KEY` untuk provider `nvidia`, `TOKENHARBOR_API_KEY` untuk provider `tokenharbor`. |
+| Kunci provider | Dibutuhkan untuk panggilan langsung. Kunci disimpan di `config.json` di bawah `providers.<id>.apiKey` (`nvidia`, `tokenharbor`), diisi lewat `ryuu --settings`. |
 
 Instal Node 25 dengan [nvm](https://github.com/nvm-sh/nvm):
 
@@ -136,21 +136,17 @@ Di Windows, pakai nvm-windows atau installer resmi Node.js, lalu verifikasi deng
 # dari direktori project
 npm install
 
-# buat file environment lokal Anda
-cp .env.example .env      # macOS/Linux
-# Copy-Item .env.example .env    (Windows PowerShell)
-
-# edit .env dan isi dengan kunci asli
-chmod 600 .env            # opsional, dianjurkan di mesin bersama
+# simpan kunci provider di config.json (owner-only, di luar repo)
+node src/index.js --settings
+# lalu isi baris providers.nvidia.apiKey dengan kunci asli
 ```
 
-`.env` dikecualikan oleh `.gitignore`. Kunci juga bisa diambil dari environment
-proses dan **variabel environment menang atas nilai `.env`**:
-
-```bash
-export NVIDIA_API_KEY="nvapi-..."
-export TOKENHARBOR_API_KEY="..."
-```
+Tidak ada file `.env` dan tidak ada variabel environment: **semua konfigurasi
+berasal dari `config.json`**. Saat pertama dijalankan tanpa file itu, Ryuu
+membuatnya otomatis berisi semua kunci yang bisa diatur dengan nilai kosong —
+nilai kosong berarti memakai bawaan katalog, jadi Anda hanya perlu mengisi kunci
+provider. File dibuat mode `0600`, berada di luar repo, dan tidak pernah dicetak
+balik oleh CLI (API key selalu `••••••••`).
 
 Ambil kunci NVIDIA di <https://build.nvidia.com/> dan kunci Token Harbor di
 <https://tokenharbor.ai/>. Jangan pernah meng-commit kunci asli, menempelkannya
@@ -161,17 +157,17 @@ menampilkan `set (redacted)`, dan log/sesi sudah melewati proses penyingkatan
 Pilih provider aktif secara eksplisit (opsional):
 
 ```bash
-# di .env
-RYUU_PROVIDER=tokenharbor
-RYUU_MODEL=deepseek-v4.1-flash:free
+# permanen: ubah baris provider / providerModel.<id> dengan --settings
+node src/index.js --settings
 
 # atau per run
-ryuu --provider tokenharbor --model deepseek-v4.1-flash:free "tugas"
+node src/index.js --provider tokenharbor --model deepseek-v4.1-flash:free "tugas"
 ```
 
-Tanpa `RYUU_PROVIDER`, Ryuu memakai `nvidia` bila `NVIDIA_API_KEY` tersedia;
-jika tidak, provider pertama yang punya kunci. Provider yang dipilih dengan
-`/provider` disimpan di `.ryuu/preferences.json` workspace itu.
+Tanpa pilihan eksplisit, Ryuu memakai `nvidia` bila kuncinya ada; jika tidak,
+provider pertama yang punya kunci. Provider yang dipilih dengan `/provider`
+disimpan di `.ryuu/preferences.json` workspace itu dan menimpa `config.json`
+untuk workspace tersebut.
 
 ### Verifikasi instalasi
 
@@ -202,8 +198,8 @@ ryuu "Summarize this project"
 ```
 
 Saat dijalankan di luar project ini, `ryuu` tetap memakai folder saat ini sebagai
-workspace dan memuat `<cwd>/.env` lebih dulu, lalu jatuh kembali ke `.env` di
-sebelah CLI yang terpasang untuk `NVIDIA_API_KEY` dan bawaannya lainnya.
+workspace dan membaca `config.json` milik pengguna, sehingga kunci dan batasan
+tidak perlu diulang di setiap direktori.
 
 Di prompt interaktif, ketik tugas lalu tekan Enter sekali untuk mengirimnya. Untuk
 tugas beberapa baris, akhiri baris dengan `\` lalu teruskan; baris berikutnya tanpa
@@ -243,15 +239,14 @@ Anda percaya.
 | `-h`, `--help` | Menampilkan penggunaan. |
 | `-v`, `--version` | Menampilkan versi. |
 | `--task "..."` | Tugas sekali jalan eksplisit (tugas posisional juga bisa). |
-| `--workspace <path>` | Override workspace (`AGENT_WORKSPACE`). |
-| `--provider <id>` | Override provider untuk run ini (`RYUU_PROVIDER`), mis. `tokenharbor`. |
-| `--model <id>` | Override model untuk run ini (`RYUU_MODEL`). |
+| `--workspace <path>` | Override workspace untuk run ini. |
+| `--provider <id>` | Override provider untuk run ini, mis. `tokenharbor`. |
+| `--model <id>` | Override model untuk run ini. |
 | `--max-steps <n>` | Batas langkah agent opsional (`0` = tanpa batas, bawaan). |
 | `-y`, `--yes` | Menyetujui otomatis penulisan file untuk sesi ini. |
 | `--read-only` | Menolak setiap aksi tulis, eksekusi, dan destruksi. |
 | `--doctor` | Diagnostik offline. |
 | `--live` | Bersama `--doctor`: satu permintaan konektivitas nyata. |
-| `--env-file <path>` | Memuat file env tertentu alih-alih `.env`. |
 | `--settings` | Editor pengaturan global baris bernomor (tanpa menjalankan agent). |
 | `--settings --tui` | Editor pengaturan layar penuh (butuh TTY interaktif). |
 | `--settings --list` | Mencetak pengaturan yang bisa diedit lalu keluar. |
@@ -262,8 +257,8 @@ Anda percaya.
 
 ### Pengaturan global (`ryuu --settings`)
 
-Selain `.env`, Ryuu menyimpan pengaturan milik pengguna di satu file yang terbaca
-dari direktori kerja mana pun:
+Semua pengaturan milik pengguna tinggal di satu file yang terbaca dari direktori
+kerja mana pun — tidak ada `.env` dan tidak ada variabel environment:
 
 ```bash
 ryuu --settings            # editor baris bernomor
@@ -301,22 +296,29 @@ selalu dipulihkan saat keluar, termasuk setelah galat; tanpa TTY perintah gagal
 dengan pesan jelas dan tidak pernah menjalankan agent.
 
 **Presedensi** (terkuat lebih dulu): flag CLI (`--provider`, `--model`,
-`--max-steps`) → environment/`.env` → `.ryuu/preferences.json` workspace →
-file pengaturan global → bawaan katalog. Environment yang sudah ada tetap
-menang, sehingga setup lama tidak berubah perilakunya; perubahan file berlaku
-pada run berikutnya. `--settings --list` menandai nilai yang sedang di-override
-environment dengan `!`.
+`--max-steps`) → `.ryuu/preferences.json` workspace → `config.json` → bawaan
+katalog. Perubahan file berlaku pada run berikutnya. Satu-satunya variabel
+environment yang masih dibaca adalah `RYUU_CONFIG_DIR`, yang menentukan letak
+file ini.
+
+**Dibuat otomatis.** Jika file belum ada, run pertama (termasuk `--doctor`)
+langsung membuatnya berisi `version`, `provider`, `providers`,
+`providerModel`, `extraProviders`, `agent`, dan `webSearch` dengan setiap kunci
+bernilai kosong. Nilai kosong divalidasi sebagai bawaan, sehingga file yang baru
+dibuat tidak mengubah perilaku apa pun; file yang sudah ada — termasuk yang JSON-
+nya rusak — tidak pernah ditimpa.
 
 **Provider dan model.** Baris kunci, base URL, dan model dibuat dari katalog
-provider yang sama dengan runtime. Provider tambahan dari `RYUU_PROVIDERS`
-(lihat [Menambah provider sendiri](#menambah-provider-sendiri-ryuu_providers))
-otomatis mendapat barisnya mengikuti `apiKeyEnv` masing-masing.
+provider yang sama dengan runtime. Provider tambahan dari `extraProviders`
+(lihat [Menambah provider sendiri](#menambah-provider-sendiri-extraproviders))
+otomatis mendapat baris `providers.<id>.apiKey`, `providers.<id>.baseURL`, dan
+`providerModel.<id>`.
 
 **Keamanan, backup, dan pemulihan.** File ditulis atomik (file sementara di
 direktori yang sama, fsync, lalu rename) dengan izin `0600` pada POSIX; path yang
 berupa symlink ditolak. JSON yang rusak **tidak pernah ditimpa**: mode
 `--settings` berhenti dengan pesan yang menyebut path-nya, sedangkan startup
-normal hanya memberi peringatan lalu memakai environment/bawaan. Untuk
+normal hanya memberi peringatan lalu memakai bawaan. Untuk
 memulihkan, perbaiki JSON-nya atau pindahkan file ke samping, lalu jalankan
 `ryuu --settings` lagi. Hanya nilai yang Anda ubah yang ditulis; kunci yang
 tidak ada memakai bawaan. Jangan meng-commit file ini — lokasinya di luar repo,
@@ -324,7 +326,7 @@ tetapi tetap berisi kredensial.
 
 **Pemecahan masalah.** `Permission denied` berarti direktori tidak bisa ditulis:
 arahkan `RYUU_CONFIG_DIR` ke lokasi yang bisa ditulis. Nilai yang ditolak
-menyebut batasannya (mis. `AGENT_MAX_STEPS must be between 0 and 100000`), dan
+menyebut batasannya (mis. `agent.maxSteps must be between 0 and 100000`), dan
 kesalahan format JSON menyebut path serta tidak mengubah file.
 
 ### UI layar penuh (`--tui`)
@@ -429,7 +431,7 @@ yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
 | `/help [command]` | Mendaftarkan command atau menampilkan detail. | |
 | `/exit` | Keluar dan menghentikan proses anak. | Juga `Ctrl+C` dua kali. |
 | `/clear` | Melupakan memori percakapan agar tugas berikutnya mulai bersih. | Sesi tersimpan tidak disentuh. |
-| `/memory [clear]` | Menampilkan apa yang diingat agent antar-tugas. | Dibatasi `AGENT_MAX_CONTEXT_CHARS`. |
+| `/memory [clear]` | Menampilkan apa yang diingat agent antar-tugas. | Dibatasi `agent.maxContextChars`. |
 | `/worklog` | Menampilkan fakta terverifikasi (file dibaca/diubah, command, temuan) yang akan dipakai agent alih-alih membaca ulang. | Dihapus oleh `/clear`. |
 | `/resume <session-id>` | Memulihkan memori percakapan sebuah sesi tersimpan. | Daftar id dengan `/history`. |
 | `/status` | Provider, model, endpoint, status kunci, workspace, batas, jumlah proses/undo, tugas terakhir. | |
@@ -464,15 +466,14 @@ agent, sehingga menambah model atau provider tidak menyentuh agent core.
 
 | Provider | Nama | Base URL | Kunci | Model bawaan | Kapabilitas yang diumumkan |
 | --- | --- | --- | --- | --- | --- |
-| `nvidia` | NVIDIA Integrate API | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | streaming, tools, reasoning, multimodal |
-| `tokenharbor` | Token Harbor | `https://tokenharbor.ai/v1` | `TOKENHARBOR_API_KEY` | `deepseek-v4.1-flash:free` | streaming, tools, reasoning |
+| `nvidia` | NVIDIA Integrate API | `https://integrate.api.nvidia.com/v1` | `providers.nvidia.apiKey` | `minimaxai/minimax-m3.1-flash` (ke-6 di `/model`) | streaming, tools, reasoning, multimodal |
+| `tokenharbor` | Token Harbor | `https://tokenharbor.ai/v1` | `providers.tokenharbor.apiKey` | `deepseek-v4.1-flash:free` | streaming, tools, reasoning |
 
 Memilih provider dan model:
 
 ```bash
 ryuu --provider tokenharbor                            # default model provider itu
 ryuu --provider tokenharbor --model deepseek-v4.1-flash:free
-RYUU_PROVIDER=tokenharbor ryuu "tugas"                 # sama, lewat environment
 ```
 
 Di dalam sesi:
@@ -486,9 +487,10 @@ Di dalam sesi:
 /delmodel model-baru                # buang id yang ditambahkan
 ```
 
-- `/provider` hanya menampilkan `key set (redacted)` atau `no key (<VARIABEL>)`;
-  nilai kunci tidak pernah dicetak. Provider tanpa kunci tidak bisa dipilih dan
-  pesannya menyebut variabel yang harus diisi.
+- `/provider` hanya menampilkan `key set (redacted)` atau
+  `no key (providers.<id>.apiKey)`; nilai kunci tidak pernah dicetak. Provider
+  tanpa kunci tidak bisa dipilih dan pesannya menyebut baris `config.json` yang
+  harus diisi.
 - Berpindah provider tidak menghapus memori percakapan atau worklog. Pilihan
   provider dan model per provider disimpan di `.ryuu/preferences.json` milik
   workspace saat ini; `--provider`/`--model` hanya berlaku untuk satu run dan
@@ -503,17 +505,32 @@ Di dalam sesi:
   ke daftar; `/help addmodel` dan `/help delmodel` menampilkan tutorial yang sama
   di dalam CLI.
 
-#### Menambah provider sendiri (`RYUU_PROVIDERS`)
+#### Menambah provider sendiri (`extraProviders`)
 
-Provider tambahan didaftarkan sebagai JSON di `.env` (atau environment). Semua
-provider memakai protokol Chat Completions yang kompatibel OpenAI:
+Provider tambahan didaftarkan sebagai array JSON di `config.json`. Semua provider
+memakai protokol Chat Completions yang kompatibel OpenAI:
 
-```bash
-RYUU_PROVIDERS='[{"id":"myproxy","name":"My Proxy","baseURL":"https://proxy.example/v1","apiKeyEnv":"MY_PROXY_API_KEY","defaultModel":"model-b","models":[{"id":"model-a","name":"Model A"},{"id":"model-b","name":"Model B"}],"capabilities":{"tools":true,"streaming":true,"reasoning":false}}]'
+```json
+{
+  "extraProviders": [
+    {
+      "id": "myproxy",
+      "name": "My Proxy",
+      "baseURL": "https://proxy.example/v1",
+      "defaultModel": "model-b",
+      "models": ["model-a", { "id": "model-b", "name": "Model B" }],
+      "capabilities": { "tools": true, "streaming": true, "reasoning": false }
+    }
+  ],
+  "providers": { "myproxy": { "apiKey": "…" } }
+}
 ```
 
-- `id`, `name`, `baseURL`, `apiKeyEnv`, dan minimal satu model wajib. `id`
-  tidak boleh menabrak provider bawaan.
+Kuncinya disimpan seperti provider lain, yaitu `providers.myproxy.apiKey`, dan
+bisa diisi lewat `ryuu --settings` setelah provider terdaftar.
+
+- `id`, `name`, `baseURL`, dan minimal satu model wajib. `id` tidak boleh
+  menabrak provider bawaan.
 - `capabilities` menentukan apakah agent mengirim tools (`tools`), meminta
   stream (`streaming`), dan menampilkan reasoning bila provider mengirimnya
   (`reasoning`). Jangan menyalakan `tools` untuk endpoint yang tidak mendukung
@@ -569,11 +586,11 @@ dan `related_searches`. `depth: \"deep\"` meminta dua kali lipat hasil (maksimal
 
 | Provider | Transport | Kunci | Kapabilitas | Catatan |
 | --- | --- | --- | --- | --- |
-| You.com MCP | Streamable HTTP | opsional (`YDC_API_KEY`) | pencarian (tanpa kunci); ekstraksi/konten dengan kunci | Tanpa kunci memakai `?profile=free`; penemuan langsung mengembalikan `you-search`, `you-discover`. |
-| Firecrawl MCP | Streamable HTTP | opsional (`FIRECRAWL_API_KEY`) | pencarian + scrape | Tingkat tanpa kunci punya batas kredit harian; penemuan langsung mengembalikan `firecrawl_search`, `firecrawl_scrape`, `firecrawl_parse`. |
+| You.com MCP | Streamable HTTP | opsional (`webSearch.youApiKey`) | pencarian (tanpa kunci); ekstraksi/konten dengan kunci | Tanpa kunci memakai `?profile=free`; penemuan langsung mengembalikan `you-search`, `you-discover`. |
+| Firecrawl MCP | Streamable HTTP | opsional (`webSearch.firecrawlApiKey`) | pencarian + scrape | Tingkat tanpa kunci punya batas kredit harian; penemuan langsung mengembalikan `firecrawl_search`, `firecrawl_scrape`, `firecrawl_parse`. |
 | DuckDuckGo MCP | stdio | tidak ada | pencarian + ekstrak (sebagaimana diumumkan server) | Server komunitas opsional (`uvx free-search-mcp`, MIT). **Nonaktif secara bawaan** karena menjalankan kode pihak ketiga; butuh `uv` terpasang. |
-| Tavily MCP | Streamable HTTP | wajib (`TAVILY_API_KEY`) | pencarian + ekstrak | Endpoint remote butuh kunci; tanpa itu provider dilewati, tidak pernah dihubungi. |
-| Serper REST | HTTPS | wajib (`SEARCH_API_KEY`) | pencarian | Backend asli; ikut dalam rantai fallback yang sama. |
+| Tavily MCP | Streamable HTTP | wajib (`webSearch.tavilyApiKey`) | pencarian + ekstrak | Endpoint remote butuh kunci; tanpa itu provider dilewati, tidak pernah dihubungi. |
+| Serper REST | HTTPS | wajib (`webSearch.serperApiKey`) | pencarian | Backend asli; ikut dalam rantai fallback yang sama. |
 
 Bagaimana ia berperilaku:
 
@@ -591,7 +608,7 @@ Bagaimana ia berperilaku:
   dan payload tidak valid semuanya pindah ke provider berikutnya. Hasil kosong
   yang valid dicatat dan boleh juga mencoba provider berikutnya, tetapi tidak
   dilaporkan sebagai kegagalan. Pembatalan tidak pernah memicu fallback.
-- **Retry terbatas.** Maksimal `WEB_MCP_MAX_RETRIES` retry per provider untuk
+- **Retry terbatas.** Maksimal `webSearch.mcpMaxRetries` retry per provider untuk
   kegagalan *pemanggilan* sesaat (bukan handshake), dengan backoff eksponensial
   dan jitter. `429` langsung diteruskan ke provider berikutnya alih-alih
   membekukan agent. Dua kegagalan berturut-turut membuka circuit breaker 60
@@ -616,8 +633,7 @@ Bagaimana ia berperilaku:
 - **Privasi dan kuota.** Firecrawl tanpa kunci punya batas kredit harian yang
   kecil; manajer tidak pernah menguji dengan kueri sungguhan saat start. `/web
   test` secara eksplisit menyatakan tidak ada kueri yang dijalankan. Nonaktifkan
-  semuanya dengan `WEB_SEARCH_ENABLED=false` atau
-  `WEB_SEARCH_PROVIDERS=none`.
+  semuanya dengan `webSearch.enabled: false` atau `webSearch.providers: []`.
 - **Worklog:** setiap pencarian dicatat (`web_search \"...\" -> N result(s) ·
   top: ...`), sehingga tugas lanjutan memakai temuan yang ada alih-alih membayar
   kueri yang sama.
@@ -680,12 +696,12 @@ berpura-pura sebaliknya.
   file yang tertulis setengah jalan.
 - Pada 70% anggaran waktu, model diberi tahu untuk menyatu (konvergen), dan
   aliran respons yang tidak mengirim byte selama
-  `AGENT_STREAM_IDLE_TIMEOUT_MS` dibatalkan dengan `STREAM_STALLED` alih-alih
+  `agent.streamIdleTimeoutMs` dibatalkan dengan `STREAM_STALLED` alih-alih
   menahan langkah tetap terbuka.
 
 ## Model persetujuan dan izin
 
-Kebijakannya diatur dengan `AGENT_APPROVAL_POLICY`:
+Kebijakannya diatur dengan `agent.approvalPolicy`:
 
 | Risiko | `ask` (bawaan) | `auto` | `read-only` |
 | --- | --- | --- | --- |
@@ -715,59 +731,56 @@ yang tahan lama.
 
 ## Referensi konfigurasi
 
-Pengaturan berasal dari variabel environment (atau `.env`), dan nilai yang tidak
-di-set boleh jatuh ke file pengaturan global (`ryuu --settings`). Environment
-selalu menang. Nilai bawaan divalidasi saat start; nilai tidak valid membuat
-proses gagal sebelum ada panggilan API.
+Semua pengaturan berasal dari satu file `config.json` (lihat
+[Pengaturan global](#pengaturan-global-ryuu---settings)). Tidak ada `.env` dan
+tidak ada variabel environment; flag CLI menimpa nilai file untuk satu run.
+Workspace tetap ditentukan per run (cwd atau `--workspace`), bukan dari file
+global ini. Nilai bawaan divalidasi saat start; nilai tidak valid membuat proses
+gagal sebelum ada panggilan API.
 
-| Variabel | Bawaan | Makna |
+| Kunci `config.json` | Bawaan | Makna |
 | --- | --- | --- |
-| `RYUU_PROVIDER` | — | Provider aktif (`nvidia`, `tokenharbor`, atau id dari `RYUU_PROVIDERS`). Bila kosong: `nvidia` kalau kuncinya ada, jika tidak provider pertama yang punya kunci. |
-| `RYUU_MODEL` | — | Override model untuk provider aktif. Menang atas `NVIDIA_MODEL`/`TOKENHARBOR_MODEL`. |
-| `RYUU_API_KEY` | — | Override kunci untuk provider aktif (berguna untuk gateway); variabel kunci provider tetap lebih jelas. |
-| `RYUU_BASE_URL` | — | Override base URL untuk provider aktif. |
-| `RYUU_PROVIDERS` | — | JSON array provider tambahan yang kompatibel OpenAI (lihat [Menambah provider sendiri](#menambah-provider-sendiri-ryuu_providers)). |
-| `NVIDIA_API_KEY` | — | Kunci provider `nvidia`. Tidak pernah dicatat atau di-commit. |
-| `NVIDIA_MODEL` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Model bawaan provider `nvidia`. (note: faster) |
-| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base URL provider `nvidia` (kompatibel OpenAI). |
-| `TOKENHARBOR_API_KEY` | — | Kunci provider `tokenharbor`. Tidak pernah dicatat atau di-commit. |
-| `TOKENHARBOR_BASE_URL` | `https://tokenharbor.ai/v1` | Base URL provider `tokenharbor`. |
-| `TOKENHARBOR_MODEL` | `deepseek-v4.1-flash:free` | Model bawaan provider `tokenharbor`. |
-| `AGENT_WORKSPACE` | `.` | Direktori yang boleh disentuh agent. Diresolusi dan diperiksa realpath-nya. |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |
-| `AGENT_MAX_STEPS` | `0` | Batas langkah agent opsional (0 = tanpa batas, 1–100000). |
-| `AGENT_APPROVAL_POLICY` | `ask` | `ask`, `auto`, `read-only`. |
-| `AGENT_MAX_OUTPUT_TOKENS` | `4096` | Batas token output (64–32768). Nilai tinggi bisa ditolak atau mahal. |
-| `AGENT_REQUEST_TIMEOUT_MS` | `120000` | Timeout per permintaan (1s–10menit). |
-| `AGENT_STREAM_IDLE_TIMEOUT_MS` | `45000` | Membatalkan aliran respons yang tidak mengirim byte selama ini (0 menonaktifkan). |
-| `AGENT_MAX_RETRIES` | `3` | Retry untuk kegagalan sesaat (0–10). |
-| `AGENT_MAX_RECOVERY_ATTEMPTS` | `0` | Percobaan sambung ulang saat tautan provider putus. `0` = tanpa batas (coba sampai tenggat tugas atau `/cancel`); 1–1000 membatasinya. |
-| `AGENT_RECOVERY_BACKOFF_MS` | `1000` | Jeda dasar antar-percobaan sambung ulang (100ms–60s). |
-| `AGENT_MAX_FILE_BYTES` | `262144` | Batas baca per file (1KB–5MB). |
-| `AGENT_MAX_SEARCH_RESULTS` | `50` | Batas hasil pencarian (1–500). |
-| `AGENT_MAX_TOOL_OUTPUT_BYTES` | `32768` | Batas hasil tool yang dikirim balik ke model. |
-| `AGENT_MAX_TASK_DURATION_MS` | `900000` | Batas waktu nyata tugas (10s–24jam). |
-| `AGENT_MAX_CONTEXT_CHARS` | `120000` | Ambang pemadatan konteks lokal. |
-| `WEB_SEARCH_ENABLED` | `true` | Mendaftarkan `web_search` sama sekali. `false` membuangnya bersama fallback ekstraksi `read_url`. |
-| `WEB_SEARCH_FALLBACK` | `true` | Mencoba provider berikutnya setelah kegagalan. `false` berhenti pada kandidat pertama. |
-| `WEB_SEARCH_PROVIDERS` | `serper` (bila ada kunci) → `you` → `firecrawl` → `duckduckgo` → `tavily` | Urutan provider; `none` menonaktifkan semuanya. |
-| `WEB_SEARCH_DISABLED` | — | Daftar id provider yang dilewati, dipisah koma. `/web enable`/`disable` hanya mengubah sesi saat ini. |
-| `WEB_MCP_TIMEOUT_MS` | `6000` | Timeout handshake, penemuan, dan pemanggilan per percobaan (1s–30s). |
-| `WEB_MCP_MAX_RETRIES` | `1` | Retry per provider untuk kegagalan pemanggilan sesaat (0–5). |
-| `WEB_MCP_DEBUG` | `false` | Diagnostik provider tambahan di log (tanpa kunci). |
-| `YDC_API_KEY` | — | Kunci You.com opsional; tanpa kunci memakai profil pencarian gratis. |
-| `FIRECRAWL_API_KEY` | — | Kunci Firecrawl opsional; tanpa kunci memakai tingkat kredit gratis. |
-| `TAVILY_API_KEY` | — | Wajib untuk Tavily; tanpa itu Tavily dilewati. |
-| `DUCKDUCKGO_MCP_ENABLED` | `false` | Menjalankan server stdio `uvx free-search-mcp` lokal saat pertama dipakai. |
-| `DUCKDUCKGO_MCP_COMMAND` / `DUCKDUCKGO_MCP_ARGS` | `uvx` / `free-search-mcp` | Command untuk provider stdio lokal. |
-| `SEARCH_API_KEY` | — | Kunci Serper-kompatibel; menambahkan Serper ke rantai fallback. |
-| `WEB_SEARCH_ENDPOINT` | `https://google.serper.dev/search` | Endpoint SERP (`http`/`https`). |
-| `WEB_SEARCH_AUTH_HEADER` | `X-API-KEY` | `X-API-KEY` atau `Authorization` (Bearer). |
-| `WEB_SEARCH_RESULTS` | `5` | Hasil per kueri (1–10); `deep` menggandakan sampai batas. |
-| `WEB_SEARCH_TIMEOUT_MS` | `15000` | Timeout permintaan Serper (1s–60s). |
-| `AGENT_ALLOW_SHELL` | `false` | Mengizinkan sintaks shell mentah (tetap bergerbang persetujuan). |
-| `AGENT_HISTORY_DIR` | `<workspace>/.ryuu/sessions` | Penyimpanan sesi. |
-| `AGENT_LOG_DIR` | `<workspace>/.ryuu/logs` | Penyimpanan log (`agent.log`, dirotasi pada 5MB). |
+| *(kosong)* | bawaan katalog | Nilai kosong pada kunci mana pun berarti "pakai bawaan" di kolom Bawaan. |
+| `provider` | — | Provider aktif (`nvidia`, `tokenharbor`, atau id dari `extraProviders`). Bila kosong: `nvidia` kalau kuncinya ada, jika tidak provider pertama yang punya kunci. |
+| `providerModel.<id>` | model bawaan provider | Model untuk provider itu. Menang atas bawaan katalog. |
+| `providers.<id>.apiKey` | — | Kunci provider. Tidak pernah dicetak, ditulis owner-only. |
+| `providers.<id>.baseURL` | URL bawaan provider | Base URL kompatibel OpenAI. |
+| `extraProviders` | — | Array provider tambahan yang kompatibel OpenAI (lihat [Menambah provider sendiri](#menambah-provider-sendiri-extraproviders)). |
+| `agent.logLevel` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |
+| `agent.maxSteps` | `0` | Batas langkah agent opsional (0 = tanpa batas, 1–100000). |
+| `agent.approvalPolicy` | `ask` | `ask`, `auto`, `read-only`. |
+| `agent.maxOutputTokens` | `4096` | Batas token output (64–32768). Nilai tinggi bisa ditolak atau mahal. |
+| `agent.requestTimeoutMs` | `120000` | Timeout per permintaan (1s–10menit). |
+| `agent.streamIdleTimeoutMs` | `45000` | Membatalkan aliran respons yang tidak mengirim byte selama ini (0 menonaktifkan). |
+| `agent.maxRetries` | `3` | Retry untuk kegagalan sesaat (0–10). |
+| `agent.maxRecoveryAttempts` | `0` | Percobaan sambung ulang saat tautan provider putus. `0` = tanpa batas (coba sampai tenggat tugas atau `/cancel`); 1–1000 membatasinya. |
+| `agent.recoveryBackoffMs` | `1000` | Jeda dasar antar-percobaan sambung ulang (100ms–60s). |
+| `agent.maxFileBytes` | `262144` | Batas baca per file (1KB–5MB). |
+| `agent.maxSearchResults` | `50` | Batas hasil pencarian (1–500). |
+| `agent.maxToolOutputBytes` | `32768` | Batas hasil tool yang dikirim balik ke model. |
+| `agent.maxTaskDurationMs` | `900000` | Batas waktu nyata tugas (10s–24jam). |
+| `agent.maxContextChars` | `120000` | Ambang pemadatan konteks lokal. |
+| `agent.allowShell` | `false` | Mengizinkan sintaks shell mentah (tetap bergerbang persetujuan). |
+| `agent.debug` | `false` | Log debug dan stack trace. |
+| `agent.historyDir` | `<workspace>/.ryuu/sessions` | Penyimpanan sesi, relatif ke workspace. |
+| `agent.logDir` | `<workspace>/.ryuu/logs` | Penyimpanan log (`agent.log`, dirotasi pada 5MB), relatif ke workspace. |
+| `webSearch.enabled` | `true` | Mendaftarkan `web_search` sama sekali. `false` membuangnya bersama fallback ekstraksi `read_url`. |
+| `webSearch.fallback` | `true` | Mencoba provider berikutnya setelah kegagalan. `false` berhenti pada kandidat pertama. |
+| `webSearch.providers` | `serper` (bila ada kunci) → `you` → `firecrawl` → `duckduckgo` → `tavily` | Urutan provider; `[]` atau `none` menonaktifkan semuanya. |
+| `webSearch.disabled` | `[]` | Daftar id provider yang dilewati. `/web enable`/`disable` hanya mengubah sesi saat ini. |
+| `webSearch.mcpTimeoutMs` | `6000` | Timeout handshake, penemuan, dan pemanggilan per percobaan (1s–30s). |
+| `webSearch.mcpMaxRetries` | `1` | Retry per provider untuk kegagalan pemanggilan sesaat (0–5). |
+| `webSearch.debug` | `false` | Diagnostik provider tambahan di log (tanpa kunci). |
+| `webSearch.youApiKey` | — | Kunci You.com opsional; tanpa kunci memakai profil pencarian gratis. |
+| `webSearch.firecrawlApiKey` | — | Kunci Firecrawl opsional; tanpa kunci memakai tingkat kredit gratis. |
+| `webSearch.tavilyApiKey` | — | Wajib untuk Tavily; tanpa itu Tavily dilewati. |
+| `webSearch.duckduckgoEnabled` | `false` | Menjalankan server stdio `uvx free-search-mcp` lokal saat pertama dipakai. |
+| `webSearch.duckduckgoCommand` / `webSearch.duckduckgoArgs` | `uvx` / `free-search-mcp` | Command untuk provider stdio lokal. |
+| `webSearch.serperApiKey` | — | Kunci Serper-kompatibel; menambahkan Serper ke rantai fallback. |
+| `webSearch.endpoint` | `https://google.serper.dev/search` | Endpoint SERP (`http`/`https`). |
+| `webSearch.authHeader` | `X-API-KEY` | `X-API-KEY` atau `Authorization` (Bearer). |
+| `webSearch.results` | `5` | Hasil per kueri (1–10); `deep` menggandakan sampai batas. |
+| `webSearch.timeoutMs` | `15000` | Timeout permintaan Serper (1s–60s). |
 
 State lokal (`.ryuu/`) di-gitignore dan dikecualikan dari operasi file agent.
 
@@ -790,7 +803,7 @@ src/
     planner.js          prompt sesi, task brief, ekstraksi rencana, ringkasan
     worklog.js          fakta sesi terverifikasi yang dipakai ulang antar langkah dan tugas
   providers/
-    catalog.js          katalog provider + model, kapabilitas, validasi id, RYUU_PROVIDERS
+    catalog.js          katalog provider + model, kapabilitas, validasi id, extraProviders
     registry.js         registry provider dinamis (factory per id)
     index.js            pembuatan provider aktif dan resolusi pilihan provider/model
     nvidia.js           klien SDK OpenAI (dipakai semua provider), normalisasi, retry, pemetaan galat
@@ -852,7 +865,7 @@ Apa yang dilakukan implementasinya:
 - Memakai penulisan atomik file-temp + rename, mempertahankan CRLF vs LF, dan
   bisa membatalkan ketika mtime file berubah sejak pemeriksaan.
 - Menjalankan command dengan `spawn(command, args, { shell: false })` dan array
-  argumen. Sintaks shell mentah dinonaktifkan kecuali `AGENT_ALLOW_SHELL=true`,
+  argumen. Sintaks shell mentah dinonaktifkan kecuali `agent.allowShell: true`,
   dan selalu bergerbang persetujuan dengan command serta direktori kerjanya
   ditampilkan persis.
 - Membuang variabel yang tampak seperti kredensial (`*API_KEY*`, `*TOKEN*`,
@@ -913,26 +926,27 @@ npm pack --dry-run
 
 ## Pemecahan masalah
 
-### `NVIDIA_API_KEY is not set` / `TOKENHARBOR_API_KEY is not set`
+### `Provider nvidia has no API key` / `Provider tokenharbor has no API key`
 
-Pesan itu menyebut variabel milik provider aktif. Buat `.env` dari `.env.example`
-atau ekspor variasinya; variabel environment mendahului `.env`. Jalankan
-`npm run doctor` untuk melihat provider mana yang aktif dan variabel mana yang
+Pesan itu menyebut provider aktif dan path kunci yang diharapkan
+(`providers.<id>.apiKey`). Isi lewat `ryuu --settings` (baris
+`providers.nvidia.apiKey` atau `providers.tokenharbor.apiKey`). Jalankan
+`npm run doctor` untuk melihat provider mana yang aktif dan path kunci mana yang
 belum terisi. Provider tanpa kunci tidak bisa dipilih lewat `/provider`.
 
 ### 401 / 403
 
 `401` berarti kunci hilang, tidak valid, atau sudah dicabut. `403` biasanya
-berarti kunci tidak punya akses ke model terpilih. Periksa nama variabel yang
-disebut pesan galat (`NVIDIA_API_KEY` atau `TOKENHARBOR_API_KEY`), verifikasi
+berarti kunci tidak punya akses ke model terpilih. Periksa path kunci yang
+disebut pesan galat (`providers.nvidia.apiKey` atau
+`providers.tokenharbor.apiKey`), verifikasi
 akses model di dashboard provider, lalu jalankan `npm run doctor -- --live`.
 Ryuu tidak mencoba kunci provider lain sebagai pengganti.
 
 ### 404
 
-Periksa model provider aktif (`--model`, `/model`, atau `NVIDIA_MODEL` /
-`TOKENHARBOR_MODEL`) dan base URL-nya (`NVIDIA_BASE_URL` /
-`TOKENHARBOR_BASE_URL` / `RYUU_BASE_URL`). Base URL harus berupa root yang
+Periksa model provider aktif (`--model`, `/model`, atau `providerModel.<id>`) dan
+base URL-nya (`providers.<id>.baseURL`). Base URL harus berupa root yang
 kompatibel dengan OpenAI, biasanya berakhiran `/v1`.
 
 ### Model tidak tersedia / tidak ditemukan
@@ -953,7 +967,8 @@ menghormati `Retry-After` bila ada.
 
 ### Model bawaan sangat lambat atau habis waktu
 
-Model bawaan sekarang `nvidia/nemotron-3.5-super-vl-120b-a12b` (note: faster).\nEndpoint `deepseek-ai/deepseek-v4.1-flash` dihapus dari bawaan karena sering timeout di sisi provider. Forum NVIDIA punya laporan terbuka tentang
+Model bawaan sekarang `minimaxai/minimax-m3.1-flash` (entri ke-6 di `/model`).
+Endpoint `deepseek-ai/deepseek-v4.1-flash` dihapus dari bawaan karena sering timeout di sisi provider. Forum NVIDIA punya laporan terbuka tentang
 respons 3–5+ menit untuk model ini, jadi ini latensi sisi-provider, bukan
 kegagalan autentikasi. `GET /v1/models` dan
 `GET /v1/models/deepseek-ai/deepseek-v4.1-flash` tetap berhasil dengan kunci yang
@@ -964,31 +979,31 @@ project:
 
 ```bash
 node src/index.js --model z-ai/glm-5.3 "your task"
-# atau set NVIDIA_MODEL=z-ai/glm-5.3 di .env
+# atau set "providerModel": { "nvidia": "z-ai/glm-5.3" } di config.json
 ```
 
-Jika Anda tetap memakai model deepseek, naikkan `AGENT_REQUEST_TIMEOUT_MS` dan
-turunkan `AGENT_MAX_RETRIES` agar satu langkah lambat tidak berulang selama
+Jika Anda tetap memakai model deepseek, naikkan `agent.requestTimeoutMs` dan
+turunkan `agent.maxRetries` agar satu langkah lambat tidak berulang selama
 banyak menit. Periksa status terkini di <https://build.nvidia.com/> sebelum
 menganggap kunci rusak.
 
 ### "Model may not support tool calling"
 
 Ryuu butuh dukungan `tool_calls` bergaya OpenAI pada endpoint terpilih. Coba
-model berkemampuan-tool lewat `NVIDIA_MODEL` atau `/model`. Tanpa tool call,
+model berkemampuan-tool lewat `providerModel.nvidia` atau `/model`. Tanpa tool call,
 agent tetap bisa menjawab secara percakapan, tetapi tidak bisa memeriksa atau
 mengubah file.
 
 ### Galat jaringan / timeout
 
 Periksa DNS, proxy, dan akses firewall ke base URL. Naikkan
-`AGENT_REQUEST_TIMEOUT_MS` untuk endpoint lambat. `--debug` menampilkan
+`agent.requestTimeoutMs` untuk endpoint lambat. `--debug` menampilkan
 diagnostik yang sudah disunting.
 
 ### Sebuah langkah menggantung tanpa output terlihat
 
 Jika aliran berhenti mengirim byte, Ryuu membatalkannya setelah
-`AGENT_STREAM_IDLE_TIMEOUT_MS` (bawaan 45s) dan melaporkan `STREAM_STALLED`;
+`agent.streamIdleTimeoutMs` (bawaan 45s) dan melaporkan `STREAM_STALLED`;
 langkah hanya dicoba ulang ketika belum ada apa pun yang dicetak. Baris aktivitas
 selalu menunjukkan waktu berjalan, langkah, dan jumlah token, sehingga
 penggantunganan terlihat berbeda dari respons lambat yang tetap berkembang.
@@ -1005,7 +1020,7 @@ antar-percobaan). Baris `♥ link restored` menandai saat provider menjawab lagi
 dan run melanjutkan dari tempat ia berhenti. Baris aktivitas tetap berputar
 selama penantian, sehingga terminal tidak terlihat membeku.
 
-`AGENT_MAX_RECOVERY_ATTEMPTS=0` (bawaan) berarti **tanpa batas percobaan**: agent
+`agent.maxRecoveryAttempts: 0` (bawaan) berarti **tanpa batas percobaan**: agent
 terus menyambung ulang sampai provider menjawab, tenggat tugas tercapai, atau
 Anda menekan `Ctrl+C`/mengirim `/cancel`. Set nilai positif (1–1000) bila Anda
 menginginkan penghentian keras. Hanya kegagalan yang tidak bisa dicoba ulang
@@ -1018,9 +1033,9 @@ Giliran model kosong diperlakukan sebagai percobaan ulang, bukan galat. Agent
 menambahkan dorongan ("your previous response was empty… call the next tool or
 give the final answer"), menampilkan
 `♥ heartbeat · empty response · attempt 3 (unlimited) in 2.0s`, menunggu dengan
-backoff yang dimulai dari `AGENT_RECOVERY_BACKOFF_MS` dan tumbuh hingga 15s,
+backoff yang dimulai dari `agent.recoveryBackoffMs` dan tumbuh hingga 15s,
 lalu bertanya lagi dengan nomor langkah yang sama — sehingga batas opsional
-`AGENT_MAX_STEPS` tidak dikonsumsi oleh percobaan ulang. Tidak ada kegagalan
+`agent.maxSteps` tidak dikonsumsi oleh percobaan ulang. Tidak ada kegagalan
 `EMPTY_RESPONSE`: run hanya berakhir saat model menjawab, tenggat tugas lewat,
 atau Anda membatalkan. Jika ini terjadi terus-menerus, kemungkinan endpoint
 sedang mengembalikan aliran kosong (periksa `/status`, file log, atau coba model
@@ -1050,8 +1065,8 @@ yang cocok", bukan "coba lagi".
 
 ### Galat panjang konteks
 
-Mulai sesi baru, persempit tugas, turunkan `AGENT_MAX_CONTEXT_CHARS`, atau
-kecilkan `AGENT_MAX_TOOL_OUTPUT_BYTES`. Pemadatan lokal mempertahankan tugas,
+Mulai sesi baru, persempit tugas, turunkan `agent.maxContextChars`, atau
+kecilkan `agent.maxToolOutputBytes`. Pemadatan lokal mempertahankan tugas,
 rencana, file yang berubah, command, dan masalah yang menggantung, tetapi tidak
 bisa melampaui konteks provider.
 
@@ -1142,7 +1157,7 @@ Dengan kunci asli yang dikonfigurasi:
    latensi untuk provider aktif. Jika model bawaan habis waktu, konfirmasi dengan
    `--model z-ai/glm-5.3` sebelum menganggap kunci buruk (lihat bagian
    pemecahan masalah latensi).
-3. Token Harbor (dengan `TOKENHARBOR_API_KEY`): `npm run doctor -- --provider
+3. Token Harbor (dengan `providers.tokenharbor.apiKey`): `npm run doctor -- --provider
    tokenharbor --live` → `provider.catalog` menandai `tokenharbor*` dan
    konektivitas lolos bila endpoint-nya dapat dijangkau. Bila provider tidak
    dapat dijangkau, itu dilaporkan sebagai kegagalan, bukan dianggap berhasil.

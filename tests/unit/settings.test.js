@@ -4,7 +4,6 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   SettingsStore,
-  applySettingsToRaw,
   getSetting,
   maskSettingsSecret,
   readSettings,
@@ -14,6 +13,7 @@ import {
   settingsProviderId,
   writeSettings,
 } from '../../src/config/settings.js';
+import { buildRawConfig } from '../../src/config/load.js';
 import { parseArgs } from '../../src/index.js';
 import { buildSettingsRegistry } from '../../src/config/settings-registry.js';
 import { buildProviders, parseExtraProviders } from '../../src/providers/catalog.js';
@@ -122,33 +122,39 @@ test('settings are found from any working directory', async () => {
   }
 });
 
-test('env wins over the file, and the file fills only what env left empty', () => {
-  const env = { NVIDIA_API_KEY: 'nvapi-from-env' };
-  const raw = {
-    providerEnv: env,
-    maxSteps: '',
-    maxOutputTokens: 1234,
-    webSearchApiKey: '',
-    webSearchResults: '',
-  };
-  applySettingsToRaw(raw, {
-    providers: {
-      nvidia: { apiKey: 'nvapi-from-file', baseURL: 'https://proxy.invalid/v1' },
-      tokenharbor: { apiKey: 'th-from-file' },
+test('config.json is the only source: every section maps into the raw config', () => {
+  const raw = buildRawConfig(
+    {
+      provider: 'tokenharbor',
+      providerModel: { nvidia: 'z-ai/glm-5.3-flash', tokenharbor: 'deepseek-v4.1-flash:free' },
+      providers: {
+        nvidia: { apiKey: 'nvapi-from-file', baseURL: 'https://proxy.invalid/v1' },
+        tokenharbor: { apiKey: 'th-from-file' },
+      },
+      extraProviders: [{ id: 'myproxy', name: 'My Proxy', baseURL: 'https://proxy.invalid/v1', models: ['model-a'] }],
+      agent: { maxSteps: 12, approvalPolicy: 'auto', allowShell: true, historyDir: '.state/history' },
+      webSearch: { serperApiKey: 'serper-from-file', results: 7, providers: ['you', 'tavily'], enabled: false },
     },
-    agent: { maxSteps: 12, maxOutputTokens: 99, approvalPolicy: 'auto' },
-    webSearch: { serperApiKey: 'serper-from-file', results: 7, providers: ['you', 'tavily'] },
+    { cwd: '/tmp/ryuu-settings-map' },
+  );
+  assert.equal(raw.provider, 'tokenharbor');
+  assert.equal(raw.model, 'deepseek-v4.1-flash:free');
+  assert.deepEqual(raw.providerCredentials.nvidia, {
+    apiKey: 'nvapi-from-file',
+    baseURL: 'https://proxy.invalid/v1',
+    model: 'z-ai/glm-5.3-flash',
   });
-  assert.equal(raw.providerEnv.NVIDIA_API_KEY, 'nvapi-from-env', 'the environment keeps precedence');
-  assert.equal(raw.providerEnv.NVIDIA_BASE_URL, 'https://proxy.invalid/v1', 'empty env is filled from the file');
-  assert.equal(raw.providerEnv.TOKENHARBOR_API_KEY, 'th-from-file');
+  assert.equal(raw.providerCredentials.tokenharbor.apiKey, 'th-from-file');
+  assert.equal(raw.extraProviders[0].id, 'myproxy');
   assert.equal(raw.maxSteps, 12);
-  assert.equal(raw.maxOutputTokens, 1234, 'an env value is never replaced');
   assert.equal(raw.approvalPolicy, 'auto');
+  assert.equal(raw.allowShell, true);
+  assert.equal(raw.historyDir, '.state/history');
   assert.equal(raw.webSearchApiKey, 'serper-from-file');
   assert.equal(raw.webSearchResults, 7);
   assert.equal(raw.webSearchProviders, 'you,tavily');
-  assert.notEqual(raw.providerEnv, env, 'process.env must never be mutated');
+  assert.equal(raw.webSearchEnabled, false);
+  assert.equal(raw.workspace, '.', 'the workspace stays a per-run choice, not a global setting');
 });
 
 test('provider and model helpers normalize hand-edited values', () => {
@@ -168,34 +174,33 @@ test('the CLI parses the settings flags in any order', () => {
   assert.equal(parseArgs(['--list', '--settings']).settings, true);
 });
 
-test('extra RYUU_PROVIDERS entries get their own key, URL and model settings', () => {
+test('extraProviders entries get their own key, URL and model settings', () => {
   const extras = parseExtraProviders(
     JSON.stringify([
       {
         id: 'myproxy',
         name: 'My Proxy',
         baseURL: 'https://proxy.invalid/v1',
-        apiKeyEnv: 'MY_PROXY_KEY',
         models: ['model-a'],
       },
     ]),
     [],
   );
-  const providers = buildProviders({ env: {}, extras });
-  const entries = buildSettingsRegistry({ providers, settings: {}, env: {} });
+  const providers = buildProviders({ credentials: {}, extras });
+  const entries = buildSettingsRegistry({ providers, settings: {} });
   const key = entries.find((entry) => entry.key === 'providers.myproxy.apiKey');
-  assert.equal(key.label, 'MY_PROXY_KEY');
+  assert.equal(key.label, 'providers.myproxy.apiKey');
   assert.equal(key.secret, true);
   assert.equal(entries.find((entry) => entry.key === 'providers.myproxy.baseURL').defaultValue, 'https://proxy.invalid/v1');
   const model = entries.find((entry) => entry.key === 'providerModel.myproxy');
   assert.ok(model.choices.includes('model-a'));
 });
 
-test('the registry validates values and flags environment overrides', () => {
-  const providers = buildProviders({ env: {}, extras: [] });
-  const entries = buildSettingsRegistry({ providers, settings: {}, env: { NVIDIA_API_KEY: 'nvapi-env' } });
-  const key = entries.find((entry) => entry.label === 'NVIDIA_API_KEY');
-  assert.equal(key.envOverride, true);
+test('the registry validates values and keeps every setting addressable', () => {
+  const providers = buildProviders({ credentials: {}, extras: [] });
+  const entries = buildSettingsRegistry({ providers, settings: {} });
+  const key = entries.find((entry) => entry.label === 'providers.nvidia.apiKey');
+  assert.equal(key.envOverride, undefined, 'no environment fallback is advertised');
   assert.equal(key.validate('nvapi-abc123').ok, true);
   assert.equal(key.validate('has space').ok, false);
   assert.equal(key.validate('YOUR_API_KEY').ok, false, 'placeholders are rejected');
@@ -206,10 +211,21 @@ test('the registry validates values and flags environment overrides', () => {
   assert.equal(url.validate('ftp://proxy.invalid').ok, false);
   assert.equal(url.validate('https://user:pass@proxy.invalid').ok, false, 'credentials in URLs are refused');
 
-  const steps = entries.find((entry) => entry.label === 'AGENT_MAX_STEPS');
+  const steps = entries.find((entry) => entry.label === 'agent.maxSteps');
   assert.equal(steps.validate('12').value, 12);
   assert.equal(steps.validate('abc').ok, false);
   assert.equal(steps.validate('-1').ok, false);
+
+  const allowShell = entries.find((entry) => entry.label === 'agent.allowShell');
+  assert.equal(allowShell.validate('true').value, true);
+  assert.equal(allowShell.validate('false').value, false);
+  assert.equal(allowShell.validate('maybe').ok, false);
+
+  const disabled = entries.find((entry) => entry.label === 'webSearch.disabled');
+  assert.deepEqual(disabled.validate('tavily, you').value, ['tavily', 'you']);
+  assert.equal(disabled.validate('nope').ok, false);
+
+  assert.equal(entries.find((entry) => entry.key === 'extraProviders'), undefined, 'extraProviders stays a hand-edited JSON list');
 });
 
 test('a secret mask never reveals the value or its length', () => {

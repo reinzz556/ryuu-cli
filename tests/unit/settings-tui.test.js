@@ -15,8 +15,8 @@ async function makeTui(initial = {}, { columns = 90, rows = 24 } = {}) {
   const store = new SettingsStore({ file });
   await store.save({ version: 1, ...initial });
   const { data } = await store.read();
-  const providers = buildProviders({ env: {}, extras: [] });
-  const makeRegistry = (current) => buildSettingsRegistry({ providers, settings: current, env: {} });
+  const providers = buildProviders({ credentials: {}, extras: [] });
+  const makeRegistry = (current) => buildSettingsRegistry({ providers, settings: current });
   const input = new PassThrough();
   input.isTTY = true;
   input.raw = null;
@@ -54,21 +54,20 @@ test('the settings screen renders every setting and masks secrets', async () => 
   const { tui } = await makeTui({ providers: { nvidia: { apiKey: 'nvapi-tui-secret-value' } } });
   const frame = tui.renderRows(90, 24).join('\n');
   assert.match(frame, /RYUU SETTINGS/);
-  assert.match(frame, /DEFAULT_PROVIDER/);
-  assert.match(frame, /NVIDIA_API_KEY\s+••••••••/);
+  assert.match(frame, /provider/);
+  assert.match(frame, /providers\.nvidia\.apiKey\s+••••••••/);
   assert.ok(!frame.includes('nvapi-tui-secret-value'), 'the key must never reach the screen');
-  assert.match(frame, /RYUU_PROVIDER wins over this file when set/);
 });
 
 test('arrow keys move the selection, keep it in range and scroll the window', async () => {
   const { tui } = await makeTui();
-  assert.equal(tui.selected.label, 'DEFAULT_PROVIDER');
+  assert.equal(tui.selected.label, 'provider');
   await tui.handleKey('down');
-  assert.equal(tui.selected.label, 'NVIDIA_API_KEY');
+  assert.equal(tui.selected.label, 'providers.nvidia.apiKey');
   await tui.handleKey('up');
-  assert.equal(tui.selected.label, 'DEFAULT_PROVIDER');
+  assert.equal(tui.selected.label, 'provider');
   await tui.handleKey('up');
-  assert.equal(tui.selected.label, 'DEFAULT_PROVIDER', 'the first entry stops the cursor');
+  assert.equal(tui.selected.label, 'provider', 'the first entry stops the cursor');
   await tui.handleKey('end');
   assert.equal(tui.index, tui.entries.length - 1);
   await tui.handleKey('home');
@@ -82,12 +81,12 @@ test('arrow keys move the selection, keep it in range and scroll the window', as
 
 test('editing a text setting saves it immediately and masks a secret afterwards', async () => {
   const { tui, file } = await makeTui();
-  tui.select(numberOf(tui, 'NVIDIA_API_KEY'));
+  tui.select(numberOf(tui, 'providers.nvidia.apiKey'));
   await tui.handleKey('enter');
   tui.insertText('nvapi-tui-saved-key');
   await tui.handleKey('enter');
 
-  assert.match(tui.status.text, /Saved NVIDIA_API_KEY/);
+  assert.match(tui.status.text, /Saved providers\.nvidia\.apiKey/);
   const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
   assert.equal(saved.providers.nvidia.apiKey, 'nvapi-tui-saved-key');
   const frame = tui.renderRows(90, 24).join('\n');
@@ -98,7 +97,7 @@ test('editing a text setting saves it immediately and masks a secret afterwards'
 test('Escape cancels an edit without writing anything', async () => {
   const { tui, file } = await makeTui();
   const before = await fsp.readFile(file, 'utf8');
-  tui.select(numberOf(tui, 'NVIDIA_BASE_URL'));
+  tui.select(numberOf(tui, 'providers.nvidia.baseURL'));
   await tui.handleKey('enter');
   tui.insertText('not a url');
   await tui.handleKey('escape');
@@ -110,7 +109,7 @@ test('Escape cancels an edit without writing anything', async () => {
 test('an invalid value keeps the editor open and the file untouched', async () => {
   const { tui, file } = await makeTui();
   const before = await fsp.readFile(file, 'utf8');
-  tui.select(numberOf(tui, 'MODEL[nvidia]'));
+  tui.select(numberOf(tui, 'providerModel.nvidia'));
   await tui.handleKey('enter');
   tui.insertText('bad model!');
   await tui.handleKey('enter');
@@ -121,13 +120,13 @@ test('an invalid value keeps the editor open and the file untouched', async () =
 
 test('left/right cycles select settings such as the provider', async () => {
   const { tui, file } = await makeTui();
-  tui.select(numberOf(tui, 'DEFAULT_PROVIDER'));
+  tui.select(numberOf(tui, 'provider'));
   await tui.handleKey('enter');
   assert.equal(tui.editing.buffer, 'auto');
   await tui.handleKey('right');
   assert.equal(tui.editing.buffer, 'nvidia');
   await tui.handleKey('enter');
-  assert.match(tui.status.text, /Saved DEFAULT_PROVIDER/);
+  assert.match(tui.status.text, /Saved provider/);
   assert.equal(JSON.parse(await fsp.readFile(file, 'utf8')).provider, 'nvidia');
 });
 

@@ -278,7 +278,7 @@ export async function createApp({
       providerId: selection.providerId,
       provider: selection.providerId,
       providerName: selection.providerName,
-      apiKeyEnv: selection.apiKeyEnv,
+      apiKeyPath: selection.apiKeyPath,
       apiKey: selection.apiKey,
       baseURL: selection.baseURL,
       model: selection.model,

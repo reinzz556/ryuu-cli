@@ -367,7 +367,7 @@ export class WebSearchManager {
     const text = clean(query, MAX_QUERY_CHARS);
     if (!text) throw new ValidationError('query must be a non-empty string.');
     if (!this.enabled) {
-      throw new SearchError('Web search is disabled (WEB_SEARCH_ENABLED=false).', { code: 'SEARCH_DISABLED' });
+      throw new SearchError('Web search is disabled (webSearch.enabled=false).', { code: 'SEARCH_DISABLED' });
     }
     const mode = depth === 'deep' ? 'deep' : 'standard';
     const maxResults = mode === 'deep' ? Math.min(this.maxResults * 2, 10) : this.maxResults;
@@ -497,7 +497,7 @@ export class WebSearchManager {
 
   async extract({ url, maxChars = 20000 } = {}, { signal = null } = {}) {
     if (!this.enabled) {
-      throw new SearchError('Web search is disabled (WEB_SEARCH_ENABLED=false).', { code: 'SEARCH_DISABLED' });
+      throw new SearchError('Web search is disabled (webSearch.enabled=false).', { code: 'SEARCH_DISABLED' });
     }
     let parsed;
     try {

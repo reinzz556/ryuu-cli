@@ -3,15 +3,15 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { RyuuError } from '../utils/errors.js';
-import { buildProviders, normalizeModelId, normalizeProviderId, parseExtraProviders } from '../providers/catalog.js';
+import { normalizeModelId, normalizeProviderId } from '../providers/catalog.js';
 
 /**
  * Global user settings.
  *
- * Unlike `.env` (per project, per shell) and `.ryuu/preferences.json` (per
- * workspace), this file belongs to the user: it is found from any working
- * directory, holds the provider credentials and the agent defaults, and is
- * edited with `ryuu --settings`.
+ * This file is the only place configuration lives. Unlike
+ * `.ryuu/preferences.json` (per workspace), it belongs to the user: it is found
+ * from any working directory, holds the provider credentials and the agent
+ * defaults, and is edited with `ryuu --settings`.
  *
  * Shape (every section optional; unknown keys are preserved):
  *   {
@@ -19,7 +19,8 @@ import { buildProviders, normalizeModelId, normalizeProviderId, parseExtraProvid
  *     "provider": "nvidia",
  *     "providerModel": { "nvidia": "…" },
  *     "providers": { "nvidia": { "apiKey": "", "baseURL": "…" } },
- *     "agent": { "maxSteps": 0, "approvalPolicy": "ask" },
+ *     "extraProviders": [ { "id": "myproxy", "name": "…", "baseURL": "…", "models": ["…"] } ],
+ *     "agent": { "maxSteps": 0, "approvalPolicy": "ask", "allowShell": false },
  *     "webSearch": { "serperApiKey": "", "providers": ["you", "firecrawl"] }
  *   }
  *
@@ -31,37 +32,9 @@ export const SETTINGS_VERSION = 1;
 export const SETTINGS_FILE_NAME = 'config.json';
 export const SETTINGS_DIR_ENV = 'RYUU_CONFIG_DIR';
 
-/** Agent keys mirrored from the settings file into the raw config. */
-export const AGENT_SETTING_KEYS = [
-  'maxSteps',
-  'maxOutputTokens',
-  'requestTimeoutMs',
-  'streamIdleTimeoutMs',
-  'maxRetries',
-  'maxRecoveryAttempts',
-  'recoveryBackoffMs',
-  'maxFileBytes',
-  'maxSearchResults',
-  'maxToolOutputBytes',
-  'maxTaskDurationMs',
-  'maxContextChars',
-  'approvalPolicy',
-  'logLevel',
-];
-
-/** `webSearch` settings keys and the raw-config key each one fills. */
-export const WEB_SETTING_KEYS = {
-  serperApiKey: 'webSearchApiKey',
-  youApiKey: 'youApiKey',
-  firecrawlApiKey: 'firecrawlApiKey',
-  tavilyApiKey: 'tavilyApiKey',
-  results: 'webSearchResults',
-  timeoutMs: 'webSearchTimeoutMs',
-  providers: 'webSearchProviders',
-};
-
 const BLOCKED_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
 const SECTIONS = ['providers', 'agent', 'webSearch', 'providerModel'];
+const LIST_SECTIONS = ['extraProviders'];
 
 function settingsError(message, { cause = null, file = null } = {}) {
   return new RyuuError(message, {
@@ -119,6 +92,16 @@ function assertSections(data, file) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw settingsError(
         `Settings file ${file} has an invalid "${section}" section (expected an object). It was NOT modified.`,
+        { file },
+      );
+    }
+  }
+  for (const section of LIST_SECTIONS) {
+    const value = data[section];
+    if (value === undefined) continue;
+    if (!Array.isArray(value)) {
+      throw settingsError(
+        `Settings file ${file} has an invalid "${section}" section (expected an array). It was NOT modified.`,
         { file },
       );
     }
@@ -319,54 +302,3 @@ export function settingsModelFor(settings, providerId) {
   return normalizeModelId(map[id]);
 }
 
-/**
- * Fill the raw config from the settings file.
- *
- * Environment variables always win: settings are defaults for the values the
- * shell/.env did not set, so an existing setup keeps behaving exactly as before
- * and a one-off `NVIDIA_API_KEY=… ryuu` still overrides the stored key.
- */
-export function applySettingsToRaw(raw, settings) {
-  if (!raw || !settings || typeof settings !== 'object') return raw;
-
-  const providerEnv = { ...(raw.providerEnv || {}) };
-  raw.providerEnv = providerEnv;
-  let extras = [];
-  try {
-    extras = parseExtraProviders(raw.extraProviders, []);
-  } catch {
-    extras = [];
-  }
-  for (const provider of buildProviders({ env: providerEnv, extras })) {
-    const stored = settings.providers?.[provider.id];
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) continue;
-    const apiKey = typeof stored.apiKey === 'string' ? stored.apiKey.trim() : '';
-    if (apiKey && provider.apiKeyEnv && !providerEnv[provider.apiKeyEnv]) {
-      providerEnv[provider.apiKeyEnv] = apiKey;
-    }
-    const baseURL = typeof stored.baseURL === 'string' ? stored.baseURL.trim() : '';
-    if (baseURL && provider.baseUrlEnv && !providerEnv[provider.baseUrlEnv]) {
-      providerEnv[provider.baseUrlEnv] = baseURL;
-    }
-  }
-
-  const agent = settings.agent && typeof settings.agent === 'object' ? settings.agent : {};
-  for (const key of AGENT_SETTING_KEYS) {
-    const value = agent[key];
-    if (value === undefined || value === null || value === '') continue;
-    if (raw[key] === undefined || raw[key] === '') raw[key] = value;
-  }
-
-  const web = settings.webSearch && typeof settings.webSearch === 'object' ? settings.webSearch : {};
-  for (const [settingsKey, rawKey] of Object.entries(WEB_SETTING_KEYS)) {
-    const value = web[settingsKey];
-    if (value === undefined || value === null || value === '') continue;
-    if (Array.isArray(value)) {
-      if (value.length === 0 || (raw[rawKey] !== undefined && raw[rawKey] !== '')) continue;
-      raw[rawKey] = value.join(',');
-      continue;
-    }
-    if (raw[rawKey] === undefined || raw[rawKey] === '') raw[rawKey] = value;
-  }
-  return raw;
-}

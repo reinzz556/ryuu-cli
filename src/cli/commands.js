@@ -51,14 +51,13 @@ const CLI_FLAGS = [
   ['--version', 'show the version and exit'],
   ['--doctor', 'run offline diagnostics'],
   ['--doctor --live', 'diagnostics plus one real API request'],
-  ['--workspace <path>', 'workspace override (AGENT_WORKSPACE)'],
-  ['--provider <id>', 'provider override (RYUU_PROVIDER), e.g. tokenharbor'],
-  ['--model <id>', 'model override for this run (RYUU_MODEL)'],
+  ['--workspace <path>', 'workspace override for this run'],
+  ['--provider <id>', 'provider override for this run, e.g. tokenharbor'],
+  ['--model <id>', 'model override for this run'],
   ['--max-steps <n>', 'step cap; 0 = unlimited (default)'],
   ['--yes', 'auto-approve file writes; commands still ask'],
   ['--auto-approve', 'auto-approve ALL actions incl. commands; the agent works without asking'],
   ['--read-only', 'deny all writes and command execution'],
-  ['--env-file <path>', 'load a specific .env file'],
   ['--no-color', 'disable ANSI colors'],
   ['--plain', 'plain output; no spinner or colors'],
   ['--tui', 'full-screen UI with expandable blocks (needs a TTY)'],
@@ -84,7 +83,7 @@ export function createCommands(state) {
 
   const stateDir = () => stateDirFor(config.workspace);
 
-  /** Effective provider descriptors (built-in plus RYUU_PROVIDERS). */
+  /** Effective provider descriptors (built-in plus config.json extraProviders). */
   const providerList = () => (Array.isArray(config.providers) ? config.providers : []);
   const currentProviderId = () => config.providerId || DEFAULT_PROVIDER_ID;
   const currentProvider = () => providerById(providerList(), currentProviderId()) || providerList()[0] || null;
@@ -204,7 +203,7 @@ export function createCommands(state) {
       `model        ${config.model}`,
       `provider     ${config.providerName || 'NVIDIA Integrate API'} (${currentProviderId()})`,
       `endpoint     ${config.baseURL}`,
-      `key          ${config.apiKeyEnv || 'NVIDIA_API_KEY'} ${config.apiKey ? 'set (redacted)' : '(not set)'}`,
+      `key          ${config.apiKeyPath || 'providers.nvidia.apiKey'} ${config.apiKey ? 'set (redacted)' : '(not set)'}`,
       `caps         ${capabilityText(config.capabilities)}`,
       `workspace    ${workspace.root}`,
       `node         ${process.version} (${process.platform})`,
@@ -252,7 +251,7 @@ export function createCommands(state) {
       if (!requested) {
         const rows = list.map((entry) => {
           const active = entry.id === currentProviderId();
-          const key = entry.apiKey ? 'key set (redacted)' : `no key (${entry.apiKeyEnv})`;
+          const key = entry.apiKey ? 'key set (redacted)' : `no key (${entry.apiKeyPath})`;
           const models = `${entry.models?.length || 0} model(s) · default ${entry.defaultModel}`;
           return `  ${entry.id.padEnd(12)} ${String(entry.name).padEnd(24)} ${key.padEnd(28)} ${models}${active ? '  \u2190 current' : ''}`;
         });
@@ -264,7 +263,7 @@ export function createCommands(state) {
             `Current provider: ${config.providerName || currentProviderId()} (${currentProviderId()}) · model ${config.model}`,
             'A key is only ever shown as set/not set; values are never printed.',
             'Usage: /provider <id>   (e.g. /provider tokenharbor)',
-            'Add a provider in .env with RYUU_PROVIDERS; add models with /addmodel.',
+            'Add providers in config.json (extraProviders); add models with /addmodel.',
           ].join('\n'),
         );
       }
@@ -296,11 +295,10 @@ export function createCommands(state) {
       '    3. /model                        list that provider\u2019s models',
       '',
       '  Notes:',
-      '    - A provider needs its own key: nvidia uses NVIDIA_API_KEY,',
-      '      tokenharbor uses TOKENHARBOR_API_KEY. Missing keys are reported by',
-      '      name, never by value.',
+      '    - A provider needs its own key, stored under providers.<id>.apiKey in',
+      '      config.json. Missing keys are reported by setting name, never by value.',
       '    - Switching keeps conversation history and the worklog.',
-      '    - Register more providers in .env with RYUU_PROVIDERS (JSON).',
+      '    - Register more providers with extraProviders in config.json.',
     ].join('\n'),
   );
 
@@ -598,7 +596,7 @@ export function createCommands(state) {
       [
         `Workspace: ${workspace.root}`,
         'Path switching is intentionally not supported mid-session: processes, approvals and sessions are scoped to it.',
-        'Start a new session with AGENT_WORKSPACE=/path ryuu (or --workspace /path).',
+        'Start a new session with ryuu --workspace /path.',
       ].join('\n'),
     );
   });
@@ -818,7 +816,7 @@ export function createCommands(state) {
     if (sub === 'providers') {
       const rows = webSearch.list().map((item) => {
         const info = PROVIDER_INFO[item.id] || {};
-        const key = info.requiresKey ? `key: ${info.keyEnv}` : info.keyEnv ? `optional key: ${info.keyEnv}` : 'no key';
+        const key = info.requiresKey ? `key: ${info.keySetting}` : info.keySetting ? `optional key: ${info.keySetting}` : 'no key';
         return [
           `  ${item.label.padEnd(12)} ${item.transport.padEnd(16)} ${key}`,
           `    ${info.note || ''}`,

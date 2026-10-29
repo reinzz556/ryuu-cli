@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   BUILTIN_PROVIDERS,
+  DEFAULT_MODEL,
   MODEL_CATALOG,
   modelsFor,
   normalizeModelId,
@@ -36,16 +37,15 @@ import { Workspace } from '../../src/services/workspace.js';
 
 const TOKENHARBOR_KEY = 'th-test-key-abcdef123456';
 
-/** Validated config for Token Harbor, built from an environment map (no .env). */
-async function tokenHarborConfig({ env = {}, raw: rawOverrides = {} } = {}) {
+/** Validated config for Token Harbor, built from config.json contents. */
+async function tokenHarborConfig({ settings = {}, raw: rawOverrides = {} } = {}) {
   const root = await makeTempDir('ryuu-tokenharbor-');
-  const baseEnv = {
-    RYUU_PROVIDER: 'tokenharbor',
-    TOKENHARBOR_API_KEY: TOKENHARBOR_KEY,
-    AGENT_WORKSPACE: root,
-    ...env,
+  const document = {
+    ...settings,
+    provider: settings.provider ?? 'tokenharbor',
+    providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY }, ...(settings.providers || {}) },
   };
-  const raw = { ...buildRawConfig(baseEnv, { cwd: root }), ...rawOverrides };
+  const raw = { ...buildRawConfig(document, { cwd: root }), ...rawOverrides };
   const { config, warnings } = validateConfig(raw, { cwd: root });
   return {
     config,
@@ -86,9 +86,6 @@ test('catalog declares Token Harbor and keeps the existing NVIDIA provider', () 
   const tokenHarbor = BUILTIN_PROVIDERS.find((provider) => provider.id === 'tokenharbor');
   assert.equal(tokenHarbor.name, 'Token Harbor');
   assert.equal(tokenHarbor.baseURL, 'https://tokenharbor.ai/v1');
-  assert.equal(tokenHarbor.apiKeyEnv, 'TOKENHARBOR_API_KEY');
-  assert.equal(tokenHarbor.baseUrlEnv, 'TOKENHARBOR_BASE_URL');
-  assert.equal(tokenHarbor.modelEnv, 'TOKENHARBOR_MODEL');
   assert.equal(tokenHarbor.defaultModel, 'deepseek-v4.1-flash:free');
   assert.deepEqual(tokenHarbor.models.map((model) => model.id), ['deepseek-v4.1-flash:free']);
   assert.equal(tokenHarbor.models[0].name, 'DeepSeek V4.1 Flash Free');
@@ -97,9 +94,12 @@ test('catalog declares Token Harbor and keeps the existing NVIDIA provider', () 
   assert.equal(tokenHarbor.capabilities.multimodal, false);
 
   const nvidia = BUILTIN_PROVIDERS.find((provider) => provider.id === 'nvidia');
-  assert.equal(nvidia.apiKeyEnv, 'NVIDIA_API_KEY');
-  assert.equal(nvidia.defaultModel, MODEL_CATALOG[0]);
-  assert.deepEqual(nvidia.models.map((model) => model.id), MODEL_CATALOG, 'the existing catalog is unchanged');
+  assert.equal(nvidia.defaultModel, DEFAULT_MODEL);
+  assert.equal(DEFAULT_MODEL, 'minimaxai/minimax-m3.1-flash');
+  assert.deepEqual(nvidia.models.map((model) => model.id), MODEL_CATALOG, 'the catalog is listed in order');
+  assert.equal(MODEL_CATALOG[5], 'minimaxai/minimax-m3.1-flash', 'the default is the 6th model');
+  assert.equal(nvidia.models[5].default, true);
+  assert.equal(nvidia.models.filter((model) => model.default).length, 1, 'only one model is marked default');
 
   const entries = modelsFor({ models: nvidia.models }, ['custom/model']);
   assert.equal(entries.at(-1).id, 'custom/model');
@@ -115,7 +115,7 @@ test('selects Token Harbor with its documented defaults and no warnings', async 
     assert.equal(ctx.config.providerName, 'Token Harbor');
     assert.equal(ctx.config.model, 'deepseek-v4.1-flash:free');
     assert.equal(ctx.config.baseURL, 'https://tokenharbor.ai/v1');
-    assert.equal(ctx.config.apiKeyEnv, 'TOKENHARBOR_API_KEY');
+    assert.equal(ctx.config.apiKeyPath, 'providers.tokenharbor.apiKey');
     assert.equal(ctx.config.apiKey, TOKENHARBOR_KEY);
     assert.equal(ctx.config.capabilities.tools, true);
     assert.deepEqual(ctx.warnings, []);
@@ -127,22 +127,23 @@ test('selects Token Harbor with its documented defaults and no warnings', async 
     const described = JSON.stringify(describeConfig(ctx.config));
     assert.match(described, /Token Harbor/);
     assert.match(described, /tokenharbor\*: key set/);
-    assert.match(described, /nvidia: no key \(NVIDIA_API_KEY\)/);
+    assert.match(described, /nvidia: no key \(providers\.nvidia\.apiKey\)/);
     assert.ok(!described.includes(TOKENHARBOR_KEY), 'the key must never be printed');
   } finally {
     await ctx.cleanup();
   }
 });
 
-test('a missing Token Harbor key names the variable instead of calling the API', async () => {
+test('a missing Token Harbor key names the setting instead of calling the API', async () => {
   const root = await makeTempDir('ryuu-tokenharbor-missing-');
   try {
-    const raw = buildRawConfig({ RYUU_PROVIDER: 'tokenharbor', AGENT_WORKSPACE: root }, { cwd: root });
+    const raw = buildRawConfig({ provider: 'tokenharbor' }, { cwd: root });
     assert.throws(
       () => validateConfig(raw, { cwd: root }),
       (error) =>
         error.code === 'CONFIG_INVALID' &&
-        /TOKENHARBOR_API_KEY is not set/.test(error.message) &&
+        /Provider tokenharbor has no API key/.test(error.message) &&
+        /providers\.tokenharbor\.apiKey/.test(error.message) &&
         /Token Harbor/.test(error.message),
     );
 
@@ -151,7 +152,7 @@ test('a missing Token Harbor key names the variable instead of calling the API',
     assert.equal(config.providerId, 'tokenharbor');
     assert.throws(
       () => new NvidiaProvider(config),
-      (error) => error.code === 'AUTH_MISSING' && /TOKENHARBOR_API_KEY/.test(error.message),
+      (error) => error.code === 'AUTH_MISSING' && /providers\.tokenharbor\.apiKey/.test(error.message),
     );
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
@@ -161,24 +162,29 @@ test('a missing Token Harbor key names the variable instead of calling the API',
 test('provider auto-selection prefers nvidia, then the first provider with a key', async () => {
   const root = await makeTempDir('ryuu-provider-auto-');
   try {
-    const resolve = (env) =>
-      validateConfig(buildRawConfig({ AGENT_WORKSPACE: root, ...env }, { cwd: root }), { cwd: root }).config;
+    const resolve = (settings) =>
+      validateConfig(buildRawConfig(settings, { cwd: root }), { cwd: root }).config;
 
-    assert.equal(resolve({ NVIDIA_API_KEY: 'nvapi-abc123456', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY }).providerId, 'nvidia');
-    assert.equal(resolve({ TOKENHARBOR_API_KEY: TOKENHARBOR_KEY }).providerId, 'tokenharbor');
     assert.equal(
-      resolve({ RYUU_PROVIDER: 'tokenharbor', NVIDIA_API_KEY: 'nvapi-abc123456', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY })
-        .providerId,
+      resolve({ providers: { nvidia: { apiKey: 'nvapi-abc123456' }, tokenharbor: { apiKey: TOKENHARBOR_KEY } } }).providerId,
+      'nvidia',
+    );
+    assert.equal(resolve({ providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } } }).providerId, 'tokenharbor');
+    assert.equal(
+      resolve({
+        provider: 'tokenharbor',
+        providers: { nvidia: { apiKey: 'nvapi-abc123456' }, tokenharbor: { apiKey: TOKENHARBOR_KEY } },
+      }).providerId,
       'tokenharbor',
       'an explicit selection wins over the key order',
     );
     assert.throws(
-      () => resolve({ RYUU_PROVIDER: 'nvidia', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY }),
-      /NVIDIA_API_KEY is not set for provider nvidia/,
+      () => resolve({ provider: 'nvidia', providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } } }),
+      /Provider nvidia has no API key/,
       'explicit selection does not fall back to another provider\'s key',
     );
 
-    const catalog = resolve({ TOKENHARBOR_API_KEY: TOKENHARBOR_KEY }).providers;
+    const catalog = resolve({ providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } } }).providers;
     assert.equal(resolveProviderId({ providers: catalog }), 'tokenharbor');
     assert.equal(resolveProviderId({ explicit: 'nvidia', providers: catalog }), 'nvidia');
   } finally {
@@ -190,7 +196,7 @@ test('unknown providers and malformed model ids are rejected before a request', 
   const root = await makeTempDir('ryuu-provider-invalid-');
   try {
     const raw = buildRawConfig(
-      { RYUU_PROVIDER: 'notreal', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY, AGENT_WORKSPACE: root },
+      { provider: 'notreal', providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } } },
       { cwd: root },
     );
     assert.throws(
@@ -199,15 +205,19 @@ test('unknown providers and malformed model ids are rejected before a request', 
     );
 
     const badModel = buildRawConfig(
-      { RYUU_PROVIDER: 'tokenharbor', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY, RYUU_MODEL: 'bad model id', AGENT_WORKSPACE: root },
+      {
+        provider: 'tokenharbor',
+        providerModel: { tokenharbor: 'bad model id' },
+        providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } },
+      },
       { cwd: root },
     );
     assert.throws(() => validateConfig(badModel, { cwd: root }), /unsupported characters/);
 
-    const unknownModel = buildRawConfig(
-      { RYUU_PROVIDER: 'tokenharbor', TOKENHARBOR_API_KEY: TOKENHARBOR_KEY, RYUU_MODEL: 'future-model:free', AGENT_WORKSPACE: root },
-      { cwd: root },
-    );
+    const unknownModel = {
+      ...buildRawConfig({ provider: 'tokenharbor', providers: { tokenharbor: { apiKey: TOKENHARBOR_KEY } } }, { cwd: root }),
+      model: 'future-model:free',
+    };
     const { config, warnings } = validateConfig(unknownModel, { cwd: root });
     assert.equal(config.model, 'future-model:free', 'a newer model id is allowed');
     assert.ok(warnings.some((warning) => /not listed for provider tokenharbor/.test(warning)));
@@ -216,24 +226,22 @@ test('unknown providers and malformed model ids are rejected before a request', 
   }
 });
 
-test('RYUU_PROVIDERS registers an extra provider without touching the agent', async () => {
+test('extraProviders registers an extra provider without touching the agent', async () => {
   const root = await makeTempDir('ryuu-provider-extra-');
   try {
     const definition = {
       id: 'myproxy',
       name: 'My Proxy',
       baseURL: 'https://proxy.example/v1',
-      apiKeyEnv: 'MY_PROXY_API_KEY',
       defaultModel: 'model-b',
       models: [{ id: 'model-a', name: 'Model A' }, { id: 'model-b', name: 'Model B' }],
       capabilities: { tools: false, streaming: false, reasoning: false },
     };
     const raw = buildRawConfig(
       {
-        RYUU_PROVIDER: 'myproxy',
-        RYUU_PROVIDERS: JSON.stringify([definition]),
-        MY_PROXY_API_KEY: 'proxy-secret-key',
-        AGENT_WORKSPACE: root,
+        provider: 'myproxy',
+        extraProviders: [definition],
+        providers: { myproxy: { apiKey: 'proxy-secret-key' } },
       },
       { cwd: root },
     );
@@ -251,16 +259,10 @@ test('RYUU_PROVIDERS registers an extra provider without touching the agent', as
     assert.equal(provider.model, 'model-b');
     providerRegistry.unregister('myproxy');
 
-    const duplicate = buildRawConfig(
-      {
-        RYUU_PROVIDERS: JSON.stringify([{ ...definition, id: 'nvidia' }]),
-        AGENT_WORKSPACE: root,
-      },
-      { cwd: root },
-    );
+    const duplicate = buildRawConfig({ extraProviders: [{ ...definition, id: 'nvidia' }] }, { cwd: root });
     assert.throws(() => validateConfig(duplicate, { cwd: root }), /already registered/);
 
-    const broken = buildRawConfig({ RYUU_PROVIDERS: '{oops', AGENT_WORKSPACE: root }, { cwd: root });
+    const broken = buildRawConfig({ extraProviders: '{oops' }, { cwd: root });
     assert.throws(() => validateConfig(broken, { cwd: root }), /not valid JSON/);
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
@@ -295,7 +297,7 @@ test('selectionFor validates the provider, its key and the model', async () => {
     assert.equal(selection.providerId, 'tokenharbor');
     assert.equal(selection.model, 'deepseek-v4.1-flash:free');
     assert.equal(selection.apiKey, TOKENHARBOR_KEY);
-    assert.equal(selection.apiKeyEnv, 'TOKENHARBOR_API_KEY');
+    assert.equal(selection.apiKeyPath, 'providers.tokenharbor.apiKey');
 
     assert.throws(() => selectionFor(ctx.config, 'nvidia'), (error) => error.code === 'AUTH_MISSING');
     assert.throws(() => selectionFor(ctx.config, 'nope'), (error) => error.code === 'UNKNOWN_PROVIDER');
@@ -423,7 +425,7 @@ test('agent respects declared capabilities: no tools and no stream when unsuppor
 });
 
 test('updateSelection repoints the same instance without rebuilding the agent', async () => {
-  const ctx = await tokenHarborConfig({ env: { NVIDIA_API_KEY: 'nvapi-abc123456' } });
+  const ctx = await tokenHarborConfig({ settings: { providers: { nvidia: { apiKey: 'nvapi-abc123456' } } } });
   try {
     const captured = [];
     const provider = new NvidiaProvider(ctx.config, {
@@ -454,7 +456,7 @@ test('updateSelection repoints the same instance without rebuilding the agent', 
     assert.equal(captured[1].auth, `Bearer ${TOKENHARBOR_KEY}`);
 
     assert.throws(
-      () => provider.updateSelection({ providerId: 'nvidia', apiKey: '', apiKeyEnv: 'NVIDIA_API_KEY' }),
+      () => provider.updateSelection({ providerId: 'nvidia', apiKey: '', apiKeyPath: 'providers.nvidia.apiKey' }),
       (error) => error.code === 'AUTH_MISSING',
     );
   } finally {
@@ -481,7 +483,7 @@ test('Token Harbor HTTP failures map to actionable codes without leaking the key
         (error) => {
           assert.equal(error.code, code);
           assert.ok(!error.message.includes(TOKENHARBOR_KEY), 'the key must never appear in an error');
-          if (status === 401) assert.match(error.message, /TOKENHARBOR_API_KEY/);
+          if (status === 401) assert.match(error.message, /providers\.tokenharbor\.apiKey/);
           return true;
         },
       );

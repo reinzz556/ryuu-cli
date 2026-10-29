@@ -90,7 +90,7 @@ function httpError(status, query) {
   const suffix = `(query: ${JSON.stringify(query.slice(0, 80))})`;
   if (status === 401 || status === 403) {
     return new SearchError(
-      `Web search rejected the API key (HTTP ${status}). Check SEARCH_API_KEY and that the endpoint belongs to the same provider. ${suffix}`,
+      `Web search rejected the API key (HTTP ${status}). Check webSearch.serperApiKey and that the endpoint belongs to the same provider. ${suffix}`,
       { code: 'SEARCH_AUTH', status },
     );
   }
@@ -200,7 +200,7 @@ export function createSerperProvider({ config, logger = null, fetch: fetchImpl =
     try {
       data = raw ? JSON.parse(raw) : null;
     } catch {
-      throw new SearchError('Web search returned a response that is not JSON. Check WEB_SEARCH_ENDPOINT.', {
+      throw new SearchError('Web search returned a response that is not JSON. Check webSearch.endpoint.', {
         code: 'SEARCH_BAD_RESPONSE',
       });
     }

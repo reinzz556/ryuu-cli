@@ -87,7 +87,7 @@ function retryAfterMs(error) {
 export function mapProviderError(error, {
   model,
   providerName = 'NVIDIA',
-  apiKeyEnv = 'NVIDIA_API_KEY',
+  apiKeyPath = 'providers.nvidia.apiKey',
   docsUrl = null,
 } = {}) {
   if (error instanceof ProviderError) return error;
@@ -121,7 +121,7 @@ export function mapProviderError(error, {
   }
   if (status === 401) {
     return new ProviderError(
-      `${providerName} API authentication failed (401). The key is invalid, revoked, or not loaded. Check ${apiKeyEnv} and run /doctor.`,
+      `${providerName} API authentication failed (401). The key is invalid, revoked, or not loaded. Check ${apiKeyPath} in config.json and run /doctor.`,
       { code: 'AUTH_INVALID', status },
     );
   }
@@ -307,14 +307,15 @@ export function finalizeStream(acc, { durationMs = null } = {}) {
  *
  * The class name is historical (NVIDIA was the first provider); every provider
  * in the catalog uses it with its own descriptor. `providerName` and
- * `apiKeyEnv` only affect user-facing error text — credentials are never
+ * `apiKeyPath` only affect user-facing error text — credentials are never
  * printed, and a provider is never called without its own key.
  */
 export class NvidiaProvider {
   constructor(config, { client = null, logger = null, fetchImpl = null, sleepImpl = null } = {}) {
     if (!config?.apiKey) {
+      const path = config?.apiKeyPath || `providers.${config?.providerId || 'nvidia'}.apiKey`;
       throw new ProviderError(
-        `${config?.apiKeyEnv || 'NVIDIA_API_KEY'} is not set for provider ${config?.providerId || 'nvidia'}. Configure that variable in .env before using this provider.`,
+        `Provider ${config?.providerId || 'nvidia'} has no API key. Set ${path} in config.json (\`ryuu --settings\`) before using it.`,
         { code: 'AUTH_MISSING' },
       );
     }
@@ -355,18 +356,19 @@ export class NvidiaProvider {
     return this.config.providerName || 'NVIDIA';
   }
 
-  get apiKeyEnv() {
-    return this.config.apiKeyEnv || 'NVIDIA_API_KEY';
+  get apiKeyPath() {
+    return this.config.apiKeyPath || `providers.${this.providerId || 'nvidia'}.apiKey`;
   }
 
   /**
    * Repoint this provider at another provider or model without rebuilding the
    * agent (conversation memory and the worklog stay intact).
    */
-  updateSelection({ providerId, providerName, apiKeyEnv, docsUrl = null, baseURL, apiKey, model, capabilities = null } = {}) {
+  updateSelection({ providerId, providerName, apiKeyPath, docsUrl = null, baseURL, apiKey, model, capabilities = null } = {}) {
     if (!apiKey) {
+      const path = apiKeyPath || `providers.${providerId || 'unknown'}.apiKey`;
       throw new ProviderError(
-        `${apiKeyEnv || 'the API key variable'} is not set for provider ${providerId || 'unknown'}. Configure it in .env before switching.`,
+        `Provider ${providerId || 'unknown'} has no API key. Set ${path} in config.json before switching.`,
         { code: 'AUTH_MISSING' },
       );
     }
@@ -377,7 +379,7 @@ export class NvidiaProvider {
     Object.assign(this.config, {
       providerId: providerId || this.config.providerId,
       providerName: providerName || this.config.providerName,
-      apiKeyEnv: apiKeyEnv || this.config.apiKeyEnv,
+      apiKeyPath: apiKeyPath || this.config.apiKeyPath,
       docsUrl,
       baseURL: baseURL || this.config.baseURL,
       apiKey,
@@ -550,7 +552,7 @@ export class NvidiaProvider {
         const error = mapProviderError(raw, {
           model: this.config.model,
           providerName: this.providerName,
-          apiKeyEnv: this.apiKeyEnv,
+          apiKeyPath: this.apiKeyPath,
           docsUrl: this.config.docsUrl || null,
         });
         if (emitted) {

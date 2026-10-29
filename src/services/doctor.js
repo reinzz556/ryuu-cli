@@ -29,13 +29,13 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
     add('runtime', FAIL, error.message);
   }
 
-  const apiKeyEnv = config.apiKeyEnv || 'NVIDIA_API_KEY';
+  const apiKeyPath = config.apiKeyPath || 'providers.nvidia.apiKey';
   const providerName = config.providerName || 'NVIDIA Integrate API';
   const providerId = config.providerId || 'nvidia';
   add(
     'config',
     config.apiKey ? PASS : FAIL,
-    config.apiKey ? `${apiKeyEnv} is set (value hidden)` : `${apiKeyEnv} is missing`,
+    config.apiKey ? `${apiKeyPath} is set (value hidden)` : `${apiKeyPath} is missing`,
   );
   add('provider.endpoint', PASS, `${providerName} (${providerId}) at ${config.baseURL} (OpenAI-compatible chat.completions)`);
   add('provider.model', config.apiKey ? PASS : WARN, config.model);
@@ -45,7 +45,7 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
     providerRows.length > 0 ? PASS : FAIL,
     providerRows.length > 0
       ? providerRows
-          .map((provider) => `${provider.id}${provider.id === providerId ? '*' : ''}: ${provider.apiKey ? 'key set' : `no key (${provider.apiKeyEnv})`}`)
+          .map((provider) => `${provider.id}${provider.id === providerId ? '*' : ''}: ${provider.apiKey ? 'key set' : `no key (${provider.apiKeyPath})`}`)
           .join(' · ')
       : 'no providers configured',
   );
@@ -54,7 +54,7 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
     config.webSearchApiKey ? PASS : SKIP,
     config.webSearchApiKey
       ? `${config.webSearchEndpoint} (key hidden, ${config.webSearchResults} result cap)`
-      : 'Disabled: set SEARCH_API_KEY to enable the web_search tool.',
+      : 'Disabled: set webSearch.serperApiKey in config.json to enable the web_search tool.',
   );
 
   if (workspace) {
@@ -89,7 +89,7 @@ export async function runDoctor({ config, workspace, provider = null, live = fal
   }
 
   if (!config.apiKey) {
-    add('provider.connectivity', SKIP, `Skipped: no API key. Set ${apiKeyEnv}, then run /doctor live.`);
+    add('provider.connectivity', SKIP, `Skipped: no API key. Set ${apiKeyPath}, then run /doctor live.`);
   } else if (!live) {
     add('provider.connectivity', SKIP, 'Offline check only. Run /doctor live (or `ryuu --doctor --live`) for one small API call.');
   } else if (!provider) {

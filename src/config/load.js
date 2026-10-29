@@ -1,114 +1,118 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { ConfigError } from '../utils/errors.js';
+import { getSetting } from './settings.js';
 
 // The provider/model catalog lives with the providers; re-exported here so the
-// existing import sites (and the documented env defaults) keep one location.
+// existing import sites (and the documented defaults) keep one location.
 export { DEFAULT_BASE_URL, DEFAULT_MODEL, MODEL_CATALOG } from '../providers/catalog.js';
 
-/** `.env` shipped next to the installed CLI (fallback for global runs). */
-export const PACKAGE_ENV_FILE = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '.env',
-);
+/**
+ * config.json `agent` keys mapped to their raw-config names. The names are the
+ * same on purpose: one vocabulary for the file, the settings editor and the
+ * validated config.
+ */
+export const AGENT_SETTING_KEYS = [
+  'maxSteps',
+  'maxOutputTokens',
+  'requestTimeoutMs',
+  'streamIdleTimeoutMs',
+  'maxRetries',
+  'maxRecoveryAttempts',
+  'recoveryBackoffMs',
+  'maxFileBytes',
+  'maxSearchResults',
+  'maxToolOutputBytes',
+  'maxTaskDurationMs',
+  'maxContextChars',
+  'approvalPolicy',
+  'logLevel',
+  'allowShell',
+  'debug',
+  'historyDir',
+  'logDir',
+];
 
 /**
- * Load a .env file into process.env without overriding already-set variables.
- * Uses Node's built-in parser (Node >= 20.12) so there is no dotenv dependency.
+ * config.json `webSearch` keys mapped to the raw-config key they fill.
  *
- * @returns {{loaded: string[], warnings: string[]}}
+ * `duckduckgoEnabled`, `duckduckgoCommand` and `duckduckgoArgs` are stored
+ * flat under `webSearch` for a simpler editor row each.
  */
-export function loadEnvFile({ cwd = process.cwd(), envFile, fallbackFile = null, env = process.env } = {}) {
-  const candidates = envFile ? [path.resolve(cwd, envFile)] : [path.join(cwd, '.env')];
-  if (!envFile && fallbackFile) {
-    const resolved = path.resolve(fallbackFile);
-    if (!candidates.includes(resolved)) candidates.push(resolved);
-  }
-  const loaded = [];
-  const warnings = [];
+export const WEB_SETTING_KEYS = {
+  serperApiKey: 'webSearchApiKey',
+  youApiKey: 'youApiKey',
+  firecrawlApiKey: 'firecrawlApiKey',
+  tavilyApiKey: 'tavilyApiKey',
+  results: 'webSearchResults',
+  timeoutMs: 'webSearchTimeoutMs',
+  providers: 'webSearchProviders',
+  enabled: 'webSearchEnabled',
+  fallback: 'webSearchFallback',
+  disabled: 'webSearchDisabled',
+  endpoint: 'webSearchEndpoint',
+  authHeader: 'webSearchAuthHeader',
+  mcpTimeoutMs: 'webMcpTimeoutMs',
+  mcpMaxRetries: 'webMcpMaxRetries',
+  debug: 'webMcpDebug',
+  duckduckgoEnabled: 'duckduckgoMcpEnabled',
+  duckduckgoCommand: 'duckduckgoMcpCommand',
+  duckduckgoArgs: 'duckduckgoMcpArgs',
+};
 
-  for (const [index, file] of candidates.entries()) {
-    if (!fs.existsSync(file)) {
-      if (envFile) warnings.push(`Env file not found: ${file}`);
-      continue;
-    }
-    const isFallback = !envFile && index > 0;
-    const before = new Set(Object.keys(env));
-    try {
-      process.loadEnvFile(file);
-      // process.loadEnvFile does not override existing vars; record anyway.
-      const added = Object.keys(process.env).filter((key) => !before.has(key));
-      loaded.push(file);
-      if (added.length === 0 && !isFallback) {
-        warnings.push(`Env file loaded but added no new variables (existing env wins): ${file}`);
-      }
-    } catch (error) {
-      throw new ConfigError(`Failed to load env file ${file}: ${error.message}`, { file });
-    }
-  }
-  return { loaded, warnings };
+/** A list setting is stored as an array but validated as a comma list. */
+function rawListValue(value) {
+  if (!Array.isArray(value)) return value;
+  return value.length > 0 ? value.join(',') : 'none';
 }
 
-const intOrRaw = (value) => (value === undefined ? undefined : value);
+/**
+ * Build a raw, unvalidated config object from the user's config.json contents.
+ *
+ * This is the only configuration source: no `.env`, no environment variables.
+ * CLI flags are applied on top by the entry point, and the workspace's
+ * `.ryuu/preferences.json` supplies the last `/provider` and `/model` choices.
+ */
+export function buildRawConfig(settings = {}, { cwd = process.cwd() } = {}) {
+  const data = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
 
-/** Build a raw, unvalidated config object from an environment map. */
-export function buildRawConfig(env = process.env, { cwd = process.cwd() } = {}) {
-  return {
-    // RYUU_* are provider-agnostic overrides. A provider's own key/model/base
-    // URL (NVIDIA_*, TOKENHARBOR_*, …) is resolved by the provider catalog.
-    apiKey: env.RYUU_API_KEY,
-    model: env.RYUU_MODEL,
-    baseURL: env.RYUU_BASE_URL,
-    provider: env.RYUU_PROVIDER,
-    extraProviders: env.RYUU_PROVIDERS,
-    // A copy: persisted settings are injected here, and process.env must never
-    // be mutated by the settings layer.
-    providerEnv: { ...env },
-    workspace: env.AGENT_WORKSPACE || '.',
-    logLevel: env.LOG_LEVEL || 'info',
-    maxSteps: intOrRaw(env.AGENT_MAX_STEPS),
-    approvalPolicy: env.AGENT_APPROVAL_POLICY || 'ask',
-    maxOutputTokens: intOrRaw(env.AGENT_MAX_OUTPUT_TOKENS),
-    requestTimeoutMs: intOrRaw(env.AGENT_REQUEST_TIMEOUT_MS),
-    streamIdleTimeoutMs: intOrRaw(env.AGENT_STREAM_IDLE_TIMEOUT_MS),
-    maxRetries: intOrRaw(env.AGENT_MAX_RETRIES),
-    maxRecoveryAttempts: intOrRaw(env.AGENT_MAX_RECOVERY_ATTEMPTS),
-    recoveryBackoffMs: intOrRaw(env.AGENT_RECOVERY_BACKOFF_MS),
-    maxFileBytes: intOrRaw(env.AGENT_MAX_FILE_BYTES),
-    maxSearchResults: intOrRaw(env.AGENT_MAX_SEARCH_RESULTS),
-    maxToolOutputBytes: intOrRaw(env.AGENT_MAX_TOOL_OUTPUT_BYTES),
-    maxTaskDurationMs: intOrRaw(env.AGENT_MAX_TASK_DURATION_MS),
-    maxContextChars: intOrRaw(env.AGENT_MAX_CONTEXT_CHARS),
-    // Web search is optional: without a key the tool is not registered at all.
-    webSearchApiKey: env.SEARCH_API_KEY || env.WEB_SEARCH_API_KEY || env.SERPER_API_KEY,
-    webSearchEndpoint: env.WEB_SEARCH_ENDPOINT,
-    webSearchAuthHeader: env.WEB_SEARCH_AUTH_HEADER,
-    webSearchResults: intOrRaw(env.WEB_SEARCH_RESULTS),
-    webSearchTimeoutMs: intOrRaw(env.WEB_SEARCH_TIMEOUT_MS),
-    // Multi-provider MCP web search. Keys are optional; the manager skips a
-    // provider that requires one and has none configured.
-    webSearchEnabled: env.WEB_SEARCH_ENABLED,
-    webSearchFallback: env.WEB_SEARCH_FALLBACK,
-    webSearchProviders: env.WEB_SEARCH_PROVIDERS,
-    webSearchDisabled: env.WEB_SEARCH_DISABLED,
-    webMcpTimeoutMs: intOrRaw(env.WEB_MCP_TIMEOUT_MS),
-    webMcpMaxRetries: intOrRaw(env.WEB_MCP_MAX_RETRIES),
-    webMcpDebug: env.WEB_MCP_DEBUG,
-    youApiKey: env.YDC_API_KEY || env.YOU_API_KEY,
-    firecrawlApiKey: env.FIRECRAWL_API_KEY,
-    tavilyApiKey: env.TAVILY_API_KEY,
-    duckduckgoMcpEnabled: env.DUCKDUCKGO_MCP_ENABLED,
-    duckduckgoMcpCommand: env.DUCKDUCKGO_MCP_COMMAND,
-    duckduckgoMcpArgs: env.DUCKDUCKGO_MCP_ARGS,
-    allowShell: env.AGENT_ALLOW_SHELL,
-    historyDir: env.AGENT_HISTORY_DIR,
-    logDir: env.AGENT_LOG_DIR,
-    debug: env.AGENT_DEBUG,
+  // One credentials entry per provider: the key, the base URL override and the
+  // model chosen in `providerModel`. Providers without stored values still get
+  // their catalog defaults from `buildProviders`.
+  const credentials = {};
+  const storedProviders = data.providers && typeof data.providers === 'object' ? data.providers : {};
+  for (const [id, stored] of Object.entries(storedProviders)) {
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) continue;
+    credentials[id] = {
+      apiKey: typeof stored.apiKey === 'string' ? stored.apiKey : '',
+      baseURL: typeof stored.baseURL === 'string' ? stored.baseURL : '',
+      model: '',
+    };
+  }
+  const storedModels = data.providerModel && typeof data.providerModel === 'object' ? data.providerModel : {};
+  for (const [id, model] of Object.entries(storedModels)) {
+    if (typeof model !== 'string') continue;
+    if (!credentials[id]) credentials[id] = { apiKey: '', baseURL: '', model: '' };
+    credentials[id].model = model;
+  }
+
+  const raw = {
+    provider: typeof data.provider === 'string' ? data.provider : null,
+    model: null,
+    providerCredentials: credentials,
+    extraProviders: data.extraProviders ?? null,
+    workspace: '.',
     cwd,
   };
+  for (const key of AGENT_SETTING_KEYS) {
+    raw[key] = getSetting(data, `agent.${key}`);
+  }
+  for (const [settingsKey, rawKey] of Object.entries(WEB_SETTING_KEYS)) {
+    const value = getSetting(data, `webSearch.${settingsKey}`);
+    raw[rawKey] = rawListValue(value);
+  }
+  // The selected model comes from the same place the editor writes it.
+  const activeProvider = typeof raw.provider === 'string' ? raw.provider.trim().toLowerCase() : '';
+  if (activeProvider) raw.model = getSetting(data, `providerModel.${activeProvider}`) ?? null;
+  return raw;
 }
 
 /** Verify the Node.js runtime is new enough for the APIs used here. */

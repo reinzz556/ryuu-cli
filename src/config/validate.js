@@ -12,7 +12,7 @@ import {
   resolveProviderId,
 } from '../providers/catalog.js';
 
-/** Approval policies accepted by AGENT_APPROVAL_POLICY (also used by settings). */
+/** Approval policies accepted by agent.approvalPolicy (also used by settings). */
 export const APPROVAL_POLICIES = ['ask', 'auto', 'read-only'];
 /** Log levels accepted by LOG_LEVEL (also used by settings). */
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'];
@@ -137,27 +137,29 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   const warnings = [];
 
   // ---- providers -------------------------------------------------------
-  // Built-in providers (nvidia, tokenharbor) plus any RYUU_PROVIDERS entries,
-  // each with its own base URL, key, model list and capabilities.
-  const providerEnv = raw.providerEnv && typeof raw.providerEnv === 'object' ? raw.providerEnv : {};
+  // Built-in providers (nvidia, tokenharbor) plus any extraProviders entries,
+  // each with its own base URL, key, model list and capabilities. Credentials
+  // come from config.json only.
+  const providerCredentials =
+    raw.providerCredentials && typeof raw.providerCredentials === 'object' ? raw.providerCredentials : {};
   const extraProviders = parseExtraProviders(raw.extraProviders, issues);
-  const providers = buildProviders({ env: providerEnv, extras: extraProviders });
+  const providers = buildProviders({ credentials: providerCredentials, extras: extraProviders });
 
   const explicitProvider = raw.provider ? String(raw.provider).trim().toLowerCase() : null;
   const providerId = resolveProviderId({ explicit: explicitProvider, providers });
   let activeProvider = providerById(providers, providerId);
   if (!activeProvider) {
     issues.push(
-      `RYUU_PROVIDER ${JSON.stringify(raw.provider)} is not a known provider (known: ${providers
+      `provider ${JSON.stringify(raw.provider)} is not a known provider (known: ${providers
         .map((provider) => provider.id)
         .join(', ')}).`,
     );
     activeProvider = providerById(providers, DEFAULT_PROVIDER_ID) || providers[0];
   }
 
-  // Legacy/generic overrides describe the active provider only (an explicit
-  // --model/--base-url, or a caller building a config for tests). Per-provider
-  // env variables are already baked into the descriptors above.
+  // Generic overrides describe the active provider only (an explicit --model or
+  // a caller building a config for tests). Per-provider values are already
+  // baked into the descriptors above.
   const keyOverride = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
   if (keyOverride) activeProvider.apiKey = keyOverride;
   const baseUrlOverride = typeof raw.baseURL === 'string' ? raw.baseURL.trim() : '';
@@ -172,33 +174,35 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
       placeholderProviders.add(provider.id);
       provider.apiKey = '';
       warnings.push(
-        `${provider.apiKeyEnv} looks like a placeholder; provider ${provider.id} stays unavailable until a real key is set.`,
+        `${provider.apiKeyPath} looks like a placeholder; provider ${provider.id} stays unavailable until a real key is set.`,
       );
     }
   }
 
   const apiKey = activeProvider.apiKey;
-  const apiKeyEnv = activeProvider.apiKeyEnv;
+  const apiKeyPath = activeProvider.apiKeyPath;
   if (!apiKey) {
     if (requireApiKey) {
       if (placeholderProviders.has(activeProvider.id)) {
         issues.push(
-          `${apiKeyEnv} still contains the example placeholder. Replace it with a real ${activeProvider.name} key${activeProvider.docsUrl ? ` from ${activeProvider.docsUrl}` : ''}.`,
+          `${apiKeyPath} still contains the example placeholder. Replace it with a real ${activeProvider.name} key${activeProvider.docsUrl ? ` from ${activeProvider.docsUrl}` : ''}.`,
         );
       } else {
         issues.push(
-          `${apiKeyEnv} is not set for provider ${activeProvider.id}. Copy .env.example to .env and add your ${activeProvider.name} key, or export ${apiKeyEnv} in your shell.`,
+          `Provider ${activeProvider.id} has no API key. Add your ${activeProvider.name} key to config.json with \`ryuu --settings\` (${apiKeyPath}).`,
         );
       }
     }
   } else if (activeProvider.id === DEFAULT_PROVIDER_ID && !/^nvapi-[A-Za-z0-9._-]+$/.test(apiKey)) {
-    warnings.push('NVIDIA_API_KEY does not look like a typical NVIDIA key (nvapi-...). Continuing in case you use a proxy or gateway.');
+    warnings.push(
+      `The ${apiKeyPath} value does not look like a typical NVIDIA key (nvapi-...). Continuing in case you use a proxy or gateway.`,
+    );
   }
 
   const requestedModel = typeof raw.model === 'string' ? raw.model.trim() : '';
   const model = requestedModel || activeProvider.defaultModel;
   if (!model) {
-    issues.push(`No model is selected for provider ${activeProvider.id}. Set ${activeProvider.modelEnv || 'RYUU_MODEL'}.`);
+    issues.push(`No model is selected for provider ${activeProvider.id}. Set ${activeProvider.modelPath}.`);
   } else if (!MODEL_ID_PATTERN.test(model) || model.length > MAX_MODEL_ID_LENGTH) {
     issues.push(`Model id contains unsupported characters: ${JSON.stringify(model)}`);
   } else if (!isCatalogModel(activeProvider, model)) {
@@ -207,7 +211,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
     );
   }
 
-  const baseUrlLabel = activeProvider.baseUrlEnv || `base URL for ${activeProvider.id}`;
+  const baseUrlLabel = activeProvider.baseUrlPath;
   let baseURL = String(activeProvider.baseURL || '').trim();
   try {
     const parsed = new URL(baseURL);
@@ -221,7 +225,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
     issues.push(`${baseUrlLabel} is not a valid URL: ${JSON.stringify(baseURL)}`);
   }
 
-  let workspace = resolveDir(raw.workspace || '.', cwd, 'AGENT_WORKSPACE', issues) || path.resolve(cwd);
+  let workspace = resolveDir(raw.workspace || '.', cwd, 'workspace', issues) || path.resolve(cwd);
   if (!fs.existsSync(workspace)) {
     issues.push(`Workspace does not exist: ${workspace}`);
   } else {
@@ -235,12 +239,14 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
 
   const logLevel = String(raw.logLevel || 'info').toLowerCase();
   if (!LOG_LEVELS.includes(logLevel)) {
-    issues.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')} (received ${JSON.stringify(raw.logLevel)})`);
+    issues.push(`agent.logLevel must be one of ${LOG_LEVELS.join(', ')} (received ${JSON.stringify(raw.logLevel)})`);
   }
 
   const approvalPolicy = String(raw.approvalPolicy || 'ask').toLowerCase();
   if (!APPROVAL_POLICIES.includes(approvalPolicy)) {
-    issues.push(`AGENT_APPROVAL_POLICY must be one of ${APPROVAL_POLICIES.join(', ')} (received ${JSON.stringify(raw.approvalPolicy)})`);
+    issues.push(
+      `agent.approvalPolicy must be one of ${APPROVAL_POLICIES.join(', ')} (received ${JSON.stringify(raw.approvalPolicy)})`,
+    );
   }
 
   const values = {};
@@ -251,7 +257,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   // Web search is opt-in: an empty key disables the tool instead of failing startup.
   let webSearchApiKey = typeof raw.webSearchApiKey === 'string' ? raw.webSearchApiKey.trim() : '';
   if (webSearchApiKey && SEARCH_PLACEHOLDER_KEY.test(webSearchApiKey)) {
-    warnings.push('SEARCH_API_KEY looks like a placeholder; web_search is disabled until a real key is set.');
+    warnings.push('webSearch.serperApiKey looks like a placeholder; web_search is disabled until a real key is set.');
     webSearchApiKey = '';
   }
 
@@ -259,13 +265,13 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   try {
     const parsed = new URL(webSearchEndpoint);
     if (!['http:', 'https:'].includes(parsed.protocol)) {
-      issues.push(`WEB_SEARCH_ENDPOINT must use http or https, received ${parsed.protocol}`);
+      issues.push(`webSearch.endpoint must use http or https, received ${parsed.protocol}`);
     } else if (parsed.protocol === 'http:') {
-      warnings.push(`WEB_SEARCH_ENDPOINT is plain http (${parsed.host}); the search query and API key travel unencrypted.`);
+      warnings.push(`webSearch.endpoint is plain http (${parsed.host}); the search query and API key travel unencrypted.`);
     }
     webSearchEndpoint = parsed.toString();
   } catch {
-    issues.push(`WEB_SEARCH_ENDPOINT is not a valid URL: ${JSON.stringify(webSearchEndpoint)}`);
+    issues.push(`webSearch.endpoint is not a valid URL: ${JSON.stringify(webSearchEndpoint)}`);
   }
 
   const webSearchAuthHeader = WEB_SEARCH_AUTH_HEADERS.find(
@@ -273,26 +279,26 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   );
   if (!webSearchAuthHeader) {
     issues.push(
-      `WEB_SEARCH_AUTH_HEADER must be one of ${WEB_SEARCH_AUTH_HEADERS.join(', ')} (received ${JSON.stringify(raw.webSearchAuthHeader)})`,
+      `webSearch.authHeader must be one of ${WEB_SEARCH_AUTH_HEADERS.join(', ')} (received ${JSON.stringify(raw.webSearchAuthHeader)})`,
     );
   }
 
-  const webSearchEnabled = toBoolDefault('WEB_SEARCH_ENABLED', raw.webSearchEnabled, issues, true);
-  const webSearchFallback = toBoolDefault('WEB_SEARCH_FALLBACK', raw.webSearchFallback, issues, true);
-  const webMcpDebug = toBoolDefault('WEB_MCP_DEBUG', raw.webMcpDebug, issues, false);
-  const duckduckgoMcpEnabled = toBoolDefault('DUCKDUCKGO_MCP_ENABLED', raw.duckduckgoMcpEnabled, issues, false);
-  const youApiKey = optionalKey('YDC_API_KEY', raw.youApiKey, warnings);
-  const firecrawlApiKey = optionalKey('FIRECRAWL_API_KEY', raw.firecrawlApiKey, warnings);
-  const tavilyApiKey = optionalKey('TAVILY_API_KEY', raw.tavilyApiKey, warnings);
+  const webSearchEnabled = toBoolDefault('webSearch.enabled', raw.webSearchEnabled, issues, true);
+  const webSearchFallback = toBoolDefault('webSearch.fallback', raw.webSearchFallback, issues, true);
+  const webMcpDebug = toBoolDefault('webSearch.debug', raw.webMcpDebug, issues, false);
+  const duckduckgoMcpEnabled = toBoolDefault('webSearch.duckduckgoEnabled', raw.duckduckgoMcpEnabled, issues, false);
+  const youApiKey = optionalKey('webSearch.youApiKey', raw.youApiKey, warnings);
+  const firecrawlApiKey = optionalKey('webSearch.firecrawlApiKey', raw.firecrawlApiKey, warnings);
+  const tavilyApiKey = optionalKey('webSearch.tavilyApiKey', raw.tavilyApiKey, warnings);
 
-  const explicitOrder = parseProviderList('WEB_SEARCH_PROVIDERS', raw.webSearchProviders, issues);
+  const explicitOrder = parseProviderList('webSearch.providers', raw.webSearchProviders, issues);
   const webSearchProviders = explicitOrder ?? [
     ...(webSearchApiKey ? ['serper'] : []),
     ...WEB_PROVIDER_DEFAULT,
   ];
-  const webSearchDisabled = parseProviderList('WEB_SEARCH_DISABLED', raw.webSearchDisabled, issues) || [];
+  const webSearchDisabled = parseProviderList('webSearch.disabled', raw.webSearchDisabled, issues) || [];
   if (webSearchProviders.length === 0) {
-    warnings.push('WEB_SEARCH_PROVIDERS is empty; web search is registered but no provider will be tried.');
+    warnings.push('webSearch.providers is empty; web search is registered but no provider will be tried.');
   }
   const duckduckgoMcpCommand = String(raw.duckduckgoMcpCommand || 'uvx').trim();
   const duckduckgoMcpArgs = String(raw.duckduckgoMcpArgs || 'free-search-mcp')
@@ -307,21 +313,21 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   }
 
   if (values.maxOutputTokens > 8192) {
-    warnings.push('AGENT_MAX_OUTPUT_TOKENS is high; the selected model may reject it or bill more aggressively.');
+    warnings.push('agent.maxOutputTokens is high; the selected model may reject it or bill more aggressively.');
   }
   if (values.maxSteps > 50) {
-    warnings.push('AGENT_MAX_STEPS is high; long autonomous runs cost more tokens and time.');
+    warnings.push('agent.maxSteps is high; long autonomous runs cost more tokens and time.');
   }
 
-  const allowShell = toBool('AGENT_ALLOW_SHELL', raw.allowShell, issues);
+  const allowShell = toBool('agent.allowShell', raw.allowShell, issues);
   const debug = raw.debug === true || raw.debug === 'true' || raw.debug === '1';
   if (allowShell) {
-    warnings.push('AGENT_ALLOW_SHELL=true enables shell syntax after explicit approval. Shell execution is NOT a sandbox.');
+    warnings.push('agent.allowShell=true enables shell syntax after explicit approval. Shell execution is NOT a sandbox.');
   }
 
   const stateRoot = path.join(workspace, '.ryuu');
-  const historyDir = resolveDir(raw.historyDir, workspace, 'AGENT_HISTORY_DIR', issues) || path.join(stateRoot, 'sessions');
-  const logDir = resolveDir(raw.logDir, workspace, 'AGENT_LOG_DIR', issues) || path.join(stateRoot, 'logs');
+  const historyDir = resolveDir(raw.historyDir, workspace, 'agent.historyDir', issues) || path.join(stateRoot, 'sessions');
+  const logDir = resolveDir(raw.logDir, workspace, 'agent.logDir', issues) || path.join(stateRoot, 'logs');
   const undoDir = path.join(stateRoot, 'undo');
   const cacheDir = path.join(stateRoot, 'cache');
 
@@ -361,7 +367,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
       providerName: activeProvider.name,
       provider: activeProvider.id,
       providers,
-      apiKeyEnv,
+      apiKeyPath,
       capabilities: { ...activeProvider.capabilities },
       apiKey,
       model,
@@ -399,13 +405,13 @@ export function describeConfig(config) {
     baseURL: config.baseURL,
     model: config.model,
     apiKey: config.apiKey ? 'set (redacted)' : '(not set)',
-    apiKeyEnv: config.apiKeyEnv || 'NVIDIA_API_KEY',
+    apiKeyPath: config.apiKeyPath || `providers.${DEFAULT_PROVIDER_ID}.apiKey`,
     capabilities: capabilityText(config.capabilities),
     providers: providers.length
       ? providers
           .map((provider) =>
             `${provider.id}${provider.id === (config.providerId || DEFAULT_PROVIDER_ID) ? '*' : ''}: ${
-              provider.apiKey ? 'key set' : `no key (${provider.apiKeyEnv})`
+              provider.apiKey ? 'key set' : `no key (${provider.apiKeyPath})`
             }`,
           )
           .join(' · ')
@@ -427,7 +433,7 @@ export function describeConfig(config) {
     maxTaskDurationMs: config.maxTaskDurationMs,
     maxContextChars: config.maxContextChars,
     webSearch: config.webSearchEnabled === false
-      ? 'disabled (WEB_SEARCH_ENABLED=false)'
+      ? 'disabled (webSearch.enabled=false)'
       : `${config.webSearchProviders?.join(' → ') || 'no providers'} · fallback ${
           config.webSearchFallback === false ? 'off' : 'on'
         } · ${config.webMcpTimeoutMs}ms · ${config.webSearchResults} result(s)${

@@ -104,7 +104,7 @@ export function createShellTools({ workspace, config, processes, logger = null }
     defineTool({
       name: 'run_command',
       description:
-        'Run a command in the workspace and wait for completion. Prefer argv (e.g. ["npm","test"]); shell:false is used. Raw shell syntax requires AGENT_ALLOW_SHELL=true and an explicit approval. Every execution is approval-gated. Shell execution is NOT a sandbox.',
+        'Run a command in the workspace and wait for completion. Prefer argv (e.g. ["npm","test"]); shell:false is used. Raw shell syntax requires agent.allowShell=true in config.json and an explicit approval. Every execution is approval-gated. Shell execution is NOT a sandbox.',
       risk: 'exec',
       requiresApproval: true,
       schema: {
@@ -117,7 +117,7 @@ export function createShellTools({ workspace, config, processes, logger = null }
             maxItems: 200,
             description: 'Command and arguments, e.g. ["npm", "test"].',
           },
-          shell_command: { type: 'string', minLength: 1, maxLength: 4000, description: 'Raw shell string (only when AGENT_ALLOW_SHELL=true).' },
+          shell_command: { type: 'string', minLength: 1, maxLength: 4000, description: 'Raw shell string (only when agent.allowShell=true).' },
           cwd: { type: 'string', minLength: 1, maxLength: 4096, description: 'Workspace-relative working directory.' },
           timeout_ms: { type: 'integer', minimum: 1000, maximum: 600000, description: 'Timeout (default 120000).' },
           description: { type: 'string', maxLength: 200, description: 'Why this command is needed.' },
@@ -140,7 +140,7 @@ export function createShellTools({ workspace, config, processes, logger = null }
         }
         if (args.shell_command && !config.allowShell) {
           throw new ToolError(
-            'Shell syntax is disabled. Pass an argv array instead, or ask the user to set AGENT_ALLOW_SHELL=true and approve the raw command.',
+            'Shell syntax is disabled. Pass an argv array instead, or ask the user to set agent.allowShell=true in config.json and approve the raw command.',
           );
         }
         if (!args.argv && !args.shell_command) throw new ToolError('Provide argv (preferred) or shell_command.');

@@ -5,7 +5,37 @@ Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_(Belum ada apa pun.)_
+### Ditambahkan
+
+- **`config.json` dibuat otomatis pada run pertama.** Bila file pengaturan belum
+  ada, `ensureSettingsFile` menulis scaffold-nya secara atomik dengan izin
+  `0600`: `version`, `provider`, `providers.<id>.apiKey`/`baseURL`,
+  `providerModel.<id>`, `extraProviders`, `agent.*`, dan `webSearch.*`, semuanya
+  bernilai kosong. Nilai kosong diperlakukan sebagai "pakai bawaan", jadi file
+  baru tidak mengubah perilaku; file yang sudah ada atau JSON yang rusak tidak
+  pernah ditimpa. `--settings` memakai scaffold yang sama saat membuat file.
+
+### Dihapus
+
+- **File `.env` dan seluruh variabel environment tidak lagi dibaca.** Satu-satunya
+  sumber konfigurasi kini `config.json` (`ryuu --settings`): kredensial
+  (`providers.<id>.apiKey`), base URL (`providers.<id>.baseURL`), model
+  (`providerModel.<id>`), batas agent (`agent.*`), pencarian web (`webSearch.*`),
+  dan provider tambahan (`extraProviders`). `.env.example` ikut dihapus dari repo
+  dan dari daftar file paket. Presedensi: flag CLI > `.ryuu/preferences.json`
+  workspace > `config.json` > bawaan katalog; hanya `RYUU_CONFIG_DIR` yang masih
+  dibaca untuk menentukan letak `config.json`. Pesan galat, petunjuk pemulihan,
+  dan `/web providers` sekarang menyebut path kunci di `config.json`, bukan nama
+  variabel yang tidak lagi berpengaruh.
+
+### Diubah
+
+- **Model bawaan provider `nvidia` kini `minimaxai/minimax-m3.1-flash`.** Model
+  itu masuk katalog sebagai entri ke-6, jadi `/model 6` memilihnya dan startup
+  tanpa `--model`/`NVIDIA_MODEL` memakainya. Lima model sebelumnya
+  (`nvidia/nemotron-3.5-super-vl-120b-a12b`, `z-ai/glm-5.3-flash`,
+  `google/diffusiongemma-26b-a4b-it`, `poolside/laguna-xs-2.1`,
+  `stepfun-ai/step-5-preview`) tetap ada dan nomornya tidak bergeser.
 
 ## [0.3.0] - 2026-10-29
 

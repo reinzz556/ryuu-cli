@@ -113,7 +113,6 @@ test('/help documents every CLI flag with a description', async () => {
       '--yes',
       '--auto-approve',
       '--read-only',
-      '--env-file',
       '--no-color',
       '--plain',
       '--debug',
@@ -230,8 +229,8 @@ test('/web reports provider status, keys, discovery and enable/disable', async (
     assert.match(renderer.text, /missing key/);
 
     await commands.execute(parseCommandLine('/web providers'));
-    assert.match(renderer.text, /YDC_API_KEY/);
-    assert.match(renderer.text, /TAVILY_API_KEY/);
+    assert.match(renderer.text, /webSearch\.youApiKey/);
+    assert.match(renderer.text, /webSearch\.tavilyApiKey/);
 
     await commands.execute(parseCommandLine('/web test'));
     assert.match(renderer.text, /you-search/);

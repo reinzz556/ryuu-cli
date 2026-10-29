@@ -36,16 +36,16 @@ const STATUS_STYLE = {
 };
 
 const ERROR_HINTS = {
-  AUTH_INVALID: 'Check the active provider key in your environment or .env (NVIDIA_API_KEY for nvidia, TOKENHARBOR_API_KEY for tokenharbor), then run `ryuu --doctor --live`.',
+  AUTH_INVALID: 'Check the active provider key (providers.<id>.apiKey in config.json, edited with `ryuu --settings`), then run `ryuu --doctor --live`.',
   AUTH_FORBIDDEN: 'Verify this key has access to the selected model in the provider dashboard; /provider shows the active provider.',
   MODEL_NOT_FOUND: 'Check the model id with /model and the base URL with /config (it must end with /v1).',
   RATE_LIMIT: 'The provider may enforce quotas. Wait, reduce context, or switch model/provider with /model and /provider.',
   TOOLS_UNSUPPORTED: 'This model may not support OpenAI-style tool calling. Pick a tool-capable model with /model.',
-  CONTEXT_LENGTH: 'Start a new session or use a smaller task; AGENT_MAX_CONTEXT_CHARS controls local compaction.',
+  CONTEXT_LENGTH: 'Start a new session or use a smaller task; agent.maxContextChars controls local compaction.',
   PROVIDER_NETWORK: 'Check network/DNS access to the active provider and any proxy settings; /provider shows the endpoint.',
-  PROVIDER_TIMEOUT: 'Increase AGENT_REQUEST_TIMEOUT_MS or reduce the task size.',
-  TASK_TIMEOUT: 'Increase AGENT_MAX_TASK_DURATION_MS or split the task.',
-  CONFIG_INVALID: 'Fix .env (see .env.example) and restart.',
+  PROVIDER_TIMEOUT: 'Increase agent.requestTimeoutMs or reduce the task size.',
+  TASK_TIMEOUT: 'Increase agent.maxTaskDurationMs or split the task.',
+  CONFIG_INVALID: 'Fix config.json with `ryuu --settings`, then restart.',
   STREAM_INTERRUPTED: 'Partial output was kept and not retried. Re-run the task if it was incomplete.',
   INVALID_TOOL_ARGUMENTS: 'A tool call in the conversation was not valid JSON; it was repaired and the request was retried.',
 };

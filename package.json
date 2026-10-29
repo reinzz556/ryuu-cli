@@ -13,8 +13,7 @@
   "files": [
     "src",
     "README.md",
-    "CHANGELOG.md",
-    ".env.example"
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22.0.0"

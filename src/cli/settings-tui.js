@@ -582,7 +582,6 @@ export class SettingsTui {
       const label = truncate(entry.label, labelWidth).padEnd(labelWidth);
 
       const editing = this.editing && this.editing.entry === entry;
-      const flag = entry.envOverride ? this.paint('amber', ' !') : '';
       const labelText = selected ? this.c.bold(this.paint('white', label)) : this.paint('gray', label);
       let valueText;
       if (editing) {
@@ -592,7 +591,7 @@ export class SettingsTui {
       } else {
         valueText = truncate(formatValue(entry), valueWidth);
       }
-      rows.push(` ${marker} ${this.paint('gray', number)}${labelText} ${valueText}${flag}`);
+      rows.push(` ${marker} ${this.paint('gray', number)}${labelText} ${valueText}`);
     }
 
     rows.push(this.paint('gray', ` ${'─'.repeat(inner)}`));
