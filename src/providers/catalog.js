@@ -86,8 +86,8 @@ export function modelPathFor(providerId) {
   return `providerModel.${providerId}`;
 }
 
-const MAX_EXTRA_PROVIDERS = 20;
-const MAX_MODELS_PER_PROVIDER = 100;
+export const MAX_EXTRA_PROVIDERS = 20;
+export const MAX_MODELS_PER_PROVIDER = 100;
 
 /** Trim and validate a model id; returns null when it cannot be used. */
 export function normalizeModelId(value) {
@@ -189,13 +189,13 @@ export function parseExtraProviders(value, issues = []) {
       issues.push(`${label}.baseURL is required`);
       continue;
     }
-    const models = normalizeModelEntries(raw.models, issues, `${label}.models`);
+    // A provider added with `/provider add` starts with no models; `/addmodel`
+    // fills the list, so a missing default is allowed until then.
+    const models = raw.models === undefined ? [] : normalizeModelEntries(raw.models, issues, `${label}.models`);
     const defaultModel = normalizeModelId(raw.defaultModel) || models[0]?.id || null;
-    if (!defaultModel) {
-      issues.push(`${label} needs at least one model`);
-      continue;
+    if (defaultModel && !models.some((entry) => entry.id === defaultModel)) {
+      models.unshift({ id: defaultModel, name: defaultModel });
     }
-    if (!models.some((entry) => entry.id === defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
     extras.push({
       id,
       name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : id,

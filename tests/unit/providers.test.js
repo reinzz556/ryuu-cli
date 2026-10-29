@@ -8,6 +8,7 @@ import {
   MODEL_CATALOG,
   modelsFor,
   normalizeModelId,
+  parseExtraProviders,
   providerById,
   resolveProviderId,
 } from '../../src/providers/catalog.js';
@@ -224,6 +225,18 @@ test('unknown providers and malformed model ids are rejected before a request', 
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
   }
+});
+
+test('a user provider can start without models and gets one from /addmodel', () => {
+  const issues = [];
+  const extras = parseExtraProviders(
+    [{ id: 'river', baseURL: 'https://api.river.ai/v1', models: [] }],
+    issues,
+  );
+  assert.deepEqual(issues, []);
+  assert.equal(extras.length, 1);
+  assert.equal(extras[0].defaultModel, null);
+  assert.deepEqual(extras[0].models, []);
 });
 
 test('extraProviders registers an extra provider without touching the agent', async () => {
@@ -650,8 +663,8 @@ test('/model lists the active provider\u2019s models and /addmodel is provider-s
     assert.match(renderer.text, /1 built-in · 0 added/);
 
     renderer.chunks = [];
-    await commands.execute(parseCommandLine('/addmodel deepseek-next:free'));
-    assert.match(renderer.text, /Added deepseek-next:free to the model list \(#2\)/);
+    await commands.execute(parseCommandLine('/addmodel tokenharbor deepseek-next:free'));
+    assert.match(renderer.text, /Added deepseek-next:free to provider tokenharbor \(#2\)/);
 
     renderer.chunks = [];
     await commands.execute(parseCommandLine('/model'));

@@ -1,5 +1,19 @@
 import path from 'node:path';
-import { DEFAULT_PROVIDER_ID, modelsFor, normalizeModelId, providerById } from '../providers/catalog.js';
+import {
+  DEFAULT_PROVIDER_ID,
+  MAX_EXTRA_PROVIDERS,
+  modelsFor,
+  normalizeModelId,
+  normalizeProviderId,
+  providerById,
+} from '../providers/catalog.js';
+import {
+  addExtraProvider,
+  addExtraProviderModel,
+  isBuiltinProviderId,
+  removeExtraProvider,
+  removeExtraProviderModel,
+} from '../services/provider-settings.js';
 import {
   MAX_CUSTOM_MODELS,
   addCustomModel,
@@ -94,6 +108,54 @@ export function createCommands(state) {
     const custom = await readCustomModels(stateDir(), provider?.id || currentProviderId());
     const entries = modelsFor(provider, custom);
     return { custom, entries, all: entries.map((entry) => entry.id), provider };
+  };
+
+  /** Strip one pair of surrounding quotes (`/provider add "river" "https://…"`). */
+  const unquote = (value) => {
+    const text = String(value ?? '').trim();
+    if (text.length >= 2) {
+      const first = text[0];
+      const last = text[text.length - 1];
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) return text.slice(1, -1).trim();
+    }
+    return text;
+  };
+
+  /** Split arguments on whitespace while keeping quoted values together. */
+  const tokenize = (args) => {
+    const out = [];
+    let current = '';
+    let quote = null;
+    for (const char of String(args ?? '')) {
+      if (quote) {
+        if (char === quote) quote = null;
+        else current += char;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      if (/\s/.test(char)) {
+        if (current) out.push(current);
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+    if (current) out.push(current);
+    return out.map(unquote).filter((part) => part !== '');
+  };
+
+  /** Find a provider by id or display name (case-insensitive). */
+  const findProvider = (reference) => {
+    const id = normalizeProviderId(reference);
+    const name = String(reference ?? '').trim().toLowerCase();
+    return (
+      providerList().find((entry) => entry.id === id) ||
+      providerList().find((entry) => String(entry.name || '').trim().toLowerCase() === name) ||
+      null
+    );
   };
 
   const modelLabel = (entry) => (entry.name && entry.name !== entry.id ? `  (${entry.name})` : '');
@@ -234,21 +296,51 @@ export function createCommands(state) {
   });
 
   const MODEL_LIST_HINT =
-    'Add an id with /addmodel <model-id>, remove one with /delmodel <model-id>.\n' +
+    'Add a model with /addmodel <provider> <model-id>, remove one with /delmodel <provider> <model-id>.\n' +
     'The CLI does not check whether a model exists on the server; a wrong id fails when used.\n' +
-    'Models are listed per provider: switch with /provider <id> first.';
+    'Models are listed per provider: /provider user <name> switches first.';
+
+  const PROVIDER_COMMANDS = [
+    '  /provider                          list providers, keys and defaults',
+    '  /provider user <name>              switch provider (alias: /provider use <name>)',
+    '  /provider add <name> <url> [key]   add your own OpenAI-compatible provider',
+    '  /provider del <name>               remove a provider you added',
+  ];
+
+  const switchProviderTo = async (reference) => {
+    if (typeof state.switchProvider !== 'function') {
+      return print('Provider switching is not available in this session.');
+    }
+    const known = findProvider(reference);
+    if (!known) {
+      return print(
+        `Unknown provider: ${reference}. Known providers: ${providerList().map((entry) => entry.id).join(', ')}.`,
+      );
+    }
+    try {
+      const selection = await state.switchProvider(known.id);
+      print(
+        `Provider set to ${selection.providerName} (${selection.providerId}) · model ${selection.model}` +
+          (selection.persisted ? '; saved, so it stays selected in future runs.' : '.') +
+          ' Conversation history and the worklog were kept.',
+      );
+      for (const note of state.providerLimitations?.() || []) print(note);
+    } catch (error) {
+      print(`Cannot switch provider: ${error.message}`);
+    }
+  };
 
   define(
     'provider',
-    'List AI providers and their key status, or switch provider',
-    '/provider [id]',
+    'List providers, switch with /provider user <name>, or add/del your own',
+    '/provider [user <name> | add <name> <url> [apiKey] | del <name>]',
     async (args) => {
-      const requested = args.trim().toLowerCase();
+      const parts = tokenize(args);
       const list = providerList();
       if (list.length === 0) {
         return print('No providers are configured. This build has no provider catalog.');
       }
-      if (!requested) {
+      if (parts.length === 0) {
         const rows = list.map((entry) => {
           const active = entry.id === currentProviderId();
           const key = entry.apiKey ? 'key set (redacted)' : `no key (${entry.apiKeyPath})`;
@@ -262,43 +354,118 @@ export function createCommands(state) {
             '',
             `Current provider: ${config.providerName || currentProviderId()} (${currentProviderId()}) · model ${config.model}`,
             'A key is only ever shown as set/not set; values are never printed.',
-            'Usage: /provider <id>   (e.g. /provider tokenharbor)',
-            'Add providers in config.json (extraProviders); add models with /addmodel.',
+            ...PROVIDER_COMMANDS,
           ].join('\n'),
         );
       }
-      if (typeof state.switchProvider !== 'function') {
-        return print('Provider switching is not available in this session.');
-      }
-      const known = providerById(list, requested);
-      if (!known) {
-        return print(
-          `Unknown provider: ${requested}. Known providers: ${list.map((entry) => entry.id).join(', ')}.`,
+
+      const sub = parts[0].toLowerCase();
+
+      if (sub === 'add') {
+        const name = parts[1] || '';
+        const url = parts[2] || '';
+        const apiKey = parts[3] || '';
+        if (!name || !url) {
+          return print(
+            [
+              'Usage: /provider add <name> <url> [apiKey]',
+              'Example: /provider add river https://api.river.ai/v1 rv_…',
+              'The name becomes the provider id; add models with /addmodel <name> <model-id>.',
+            ].join('\n'),
+          );
+        }
+        if (!normalizeProviderId(name)) {
+          return print(
+            `"${name}" is not a usable provider name. Use lowercase letters, digits, _ and - (no spaces).`,
+          );
+        }
+        if (isBuiltinProviderId(name)) {
+          return print(`${name} is a built-in provider and cannot be added. Set its key in config.json instead.`);
+        }
+        const result = await addExtraProvider({ name, baseURL: url, apiKey });
+        if (!result.ok) {
+          const reasons = {
+            exists: `${name} is already a provider. Pass a key as the third argument to update it.`,
+            url: `"${url}" is not a usable base URL. Use an http(s) URL without embedded credentials.`,
+            limit: `At most ${MAX_EXTRA_PROVIDERS} user providers can be stored. Remove one with /provider del <name> first.`,
+            write: 'Could not update config.json. Nothing was changed.',
+            invalid: `"${name}" is not a usable provider name.`,
+            builtin: `${name} is a built-in provider and cannot be added.`,
+          };
+          return print(reasons[result.reason] || 'Could not add that provider.');
+        }
+        await state.reloadProviders?.();
+        const added = findProvider(result.id);
+        const lines = [
+          result.updated
+            ? `Updated the key for provider ${result.id} (always shown as redacted).`
+            : `Added provider ${result.id} (${result.baseURL}).`,
+        ];
+        if (!result.updated) {
+          lines.push(
+            added?.apiKey
+              ? 'Key saved (always shown as redacted).'
+              : `No key yet: pass it as the third argument or set providers.${result.id}.apiKey in config.json.`,
+          );
+        }
+        lines.push(
+          added?.models?.length
+            ? `${added.models.length} model(s) available. Switch with /provider user ${result.id}.`
+            : `No models yet: add one with /addmodel ${result.id} <model-id>, then switch with /provider user ${result.id}.`,
         );
+        return print(lines.join('\n'));
       }
-      try {
-        const selection = await state.switchProvider(known.id);
-        print(
-          `Provider set to ${selection.providerName} (${selection.providerId}) · model ${selection.model}` +
-            (selection.persisted ? '; saved, so it stays selected in future runs.' : '.') +
-            ' Conversation history and the worklog were kept.',
-        );
-        for (const note of state.providerLimitations?.() || []) print(note);
-      } catch (error) {
-        print(`Cannot switch provider: ${error.message}`);
+
+      if (sub === 'del' || sub === 'delete' || sub === 'rm') {
+        const name = parts[1] || '';
+        if (!name) {
+          return print(
+            ['Usage: /provider del <name>', 'Only providers added with /provider add can be removed.'].join('\n'),
+          );
+        }
+        const known = findProvider(name);
+        if (!known) {
+          return print(`Unknown provider: ${name}. Known providers: ${list.map((entry) => entry.id).join(', ')}.`);
+        }
+        if (isBuiltinProviderId(known.id)) {
+          return print(
+            `${known.id} is a built-in provider and cannot be removed. /provider del only removes providers added with /provider add.`,
+          );
+        }
+        const result = await removeExtraProvider(known.id, { active: known.id === currentProviderId() });
+        if (!result.ok) {
+          const reasons = {
+            active: `${known.id} is the current provider. Switch to another provider first (/provider user <name>), then delete it.`,
+            missing: `${known.id} is not a user provider, so there is nothing to delete.`,
+            write: 'Could not update config.json. Nothing was changed.',
+          };
+          return print(reasons[result.reason] || 'Could not delete that provider.');
+        }
+        await state.reloadProviders?.();
+        return print(`Removed provider ${known.id} and its stored key/model from config.json.`);
       }
+
+      const reference = sub === 'user' || sub === 'use' ? parts[1] || '' : parts[0];
+      if (!reference) return print(['Usage: /provider user <name>', ...PROVIDER_COMMANDS].join('\n'));
+      return switchProviderTo(reference);
     },
     [
       '  How to use:',
-      '    1. /provider                     list providers, keys and defaults',
-      '    2. /provider tokenharbor         switch for this and later runs',
-      '    3. /model                        list that provider\u2019s models',
+      '    1. /provider                          list providers, keys and defaults',
+      '    2. /provider add river https://api.river.ai/v1 rv_…',
+      '    3. /addmodel river deepseek-ai/DeepSeek-V4.1-Flash-1017',
+      '    4. /provider user river               switch for this and later runs',
+      '    5. /model                             list that provider\u2019s models',
       '',
       '  Notes:',
-      '    - A provider needs its own key, stored under providers.<id>.apiKey in',
-      '      config.json. Missing keys are reported by setting name, never by value.',
+      '    - /provider add stores the provider in config.json extraProviders and its',
+      '      key under providers.<id>.apiKey. The third argument is optional; without',
+      '      it, set the key later with `ryuu --settings`.',
+      '    - A new provider has no models: /addmodel <name> <model-id> adds them and',
+      '      the first one becomes the provider default.',
+      '    - Built-in providers (nvidia, tokenharbor) cannot be added or deleted, and',
+      '      the current provider cannot be deleted until you switch away.',
       '    - Switching keeps conversation history and the worklog.',
-      '    - Register more providers with extraProviders in config.json.',
     ].join('\n'),
   );
 
@@ -331,7 +498,7 @@ export function createCommands(state) {
       }
       if (!/^\d+$/.test(requested)) {
         return print(
-          'Use a number, not a model id. Run /model to see the numbered list, or /addmodel <model-id> to add one.',
+          `Use a number, not a model id. Run /model to see the numbered list, or /addmodel ${currentProviderId()} <model-id> to add one.`,
         );
       }
       const index = Number(requested) - 1;
@@ -349,63 +516,103 @@ export function createCommands(state) {
       );
     },
     [
-      '  The list is the built-in catalog plus every id added with /addmodel.',
-      '  Both the list and the selected model live in .ryuu/preferences.json, so',
-      '  they survive restarts. /addmodel and /delmodel change the list; /model <n>',
-      '  and /cmodel <name> change the current model.',
+      '  The list is the provider catalog (config.json for user providers) plus ids',
+      '  added with /addmodel, so it survives restarts. /model <n> and /cmodel <name>',
+      '  change the current model; /addmodel and /delmodel change the list.',
     ].join('\n'),
   );
 
   define(
     'addmodel',
-    'Add a model id to the /model list (existence is not checked)',
-    '/addmodel <model-id>',
+    'Add a model id to a provider (existence is not checked)',
+    '/addmodel <provider> <model-id>',
     async (args) => {
-      const name = args.trim();
-      if (!name) {
+      const parts = tokenize(args);
+      if (parts.length < 2) {
         return print(
           [
-            'Usage: /addmodel <model-id>',
-            'Example: /addmodel meta-llama/llama-3.3-70b-instruct',
-            'The id is added to the /model list and saved in .ryuu/preferences.json.',
+            'Usage: /addmodel <provider> <model-id>',
+            'Example: /addmodel river deepseek-ai/DeepSeek-V4.1-Flash-1017',
+            'User providers (from /provider add) keep the model in config.json;',
+            'built-in providers keep it in this workspace .ryuu/preferences.json.',
             'No availability check is made: a wrong id only fails when it is used.',
             'Run /help addmodel for the full tutorial.',
           ].join('\n'),
         );
       }
-      const activeProvider = currentProvider();
-      if ((activeProvider?.models || []).some((entry) => entry.id === name)) {
-        return print(`${name} is already a built-in catalog model for ${activeProvider.id}. Run /model to see its number.`);
+      const [reference, name] = parts;
+      const target = findProvider(reference);
+      if (!target) {
+        return print(
+          `Unknown provider: ${reference}. Known providers: ${providerList().map((entry) => entry.id).join(', ')}.`,
+        );
       }
-      const result = await addCustomModel(stateDir(), name, currentProviderId());
+      if (!normalizeModelId(name)) {
+        return print(
+          [
+            `"${name}" is not a usable model id.`,
+            'Use letters, digits and . _ : / - (no spaces), e.g. meta-llama/llama-3.3-70b-instruct.',
+            'Nothing was added.',
+          ].join('\n'),
+        );
+      }
+
+      if (target.source === 'settings') {
+        const result = await addExtraProviderModel(target.id, name);
+        if (!result.ok) {
+          if (result.reason === 'exists') {
+            return print(
+              `${name} is already a model for ${target.id}. Run /provider user ${target.id}, then /model to see its number.`,
+            );
+          }
+          if (result.reason === 'limit') {
+            return print(`Provider ${target.id} already holds the maximum number of models.`);
+          }
+          return print('Could not update config.json. The model list is unchanged.');
+        }
+        await state.reloadProviders?.();
+        const updated = findProvider(target.id);
+        const index = (updated?.models || []).findIndex((entry) => entry.id === name) + 1;
+        return print(
+          [
+            `Added ${name} to provider ${target.id} in config.json (#${index || 1}).`,
+            target.id === currentProviderId()
+              ? `Switch to it with /model ${index}.`
+              : `Switch to that provider with /provider user ${target.id}, then /model ${index}.`,
+            'No availability check was made: a wrong id only fails when it is used.',
+          ].join('\n'),
+        );
+      }
+
+      if ((target.models || []).some((entry) => entry.id === name)) {
+        return print(
+          `${name} is already a built-in catalog model for ${target.id}. Run /provider user ${target.id}, then /model to see its number.`,
+        );
+      }
+      const result = await addCustomModel(stateDir(), name, target.id);
       if (!result.ok) {
         if (result.reason === 'exists') {
-          return print(`${name} is already in the model list. Run /model to see its number.`);
-        }
-        if (result.reason === 'invalid') {
           return print(
-            [
-              `"${name}" is not a usable model id.`,
-              'Use letters, digits and . _ : / - (no spaces), e.g. meta-llama/llama-3.3-70b-instruct.',
-              'Nothing was added.',
-            ].join('\n'),
+            `${name} is already in the model list for ${target.id}. Run /provider user ${target.id}, then /model to see its number.`,
           );
         }
         if (result.reason === 'limit') {
           return print(
-            `The list already holds ${MAX_CUSTOM_MODELS} added model(s). Remove one with /delmodel <model-id> first.`,
+            `The list already holds ${MAX_CUSTOM_MODELS} added model(s) for ${target.id}. Remove one with /delmodel ${target.id} <model-id> first.`,
           );
         }
         return print(
           `Could not save ${name} to ${preferencesFile(stateDir())}. The model list is unchanged.`,
         );
       }
-      const { all } = await modelList();
-      const index = all.indexOf(name) + 1;
+      const entries = modelsFor(target, await readCustomModels(stateDir(), target.id));
+      const index = entries.findIndex((entry) => entry.id === name) + 1;
       print(
         [
-          `Added ${name} to the model list (#${index}).`,
-          `Switch to it with /model ${index}.`,
+          `Added ${name} to provider ${target.id} (#${index}).`,
+          target.id === currentProviderId()
+            ? `Switch to it with /model ${index}.`
+            : `Switch to that provider with /provider user ${target.id}, then /model ${index}.`,
           'No availability check was made: if this id does not exist (or the endpoint cannot call',
           'tools for it), requests using it will fail — that is on the id you entered.',
         ].join('\n'),
@@ -413,71 +620,99 @@ export function createCommands(state) {
     },
     [
       '  How to use:',
-      '    1. /addmodel vendor/model-name   add it to the numbered /model list',
-      '    2. /model                        see the list (added ids are marked "(added)")',
-      '    3. /model <n>                    switch to it for subsequent requests',
+      '    1. /provider add river https://api.river.ai/v1 rv_…',
+      '    2. /addmodel river deepseek-ai/DeepSeek-V4.1-Flash-1017',
+      '    3. /provider user river        switch to that provider',
+      '    4. /model                      see the numbered list, added ids marked "(added)"',
+      '    5. /model <n>                  switch to it for subsequent requests',
       '',
       '  Notes:',
-      '    - Saved in .ryuu/preferences.json next to this workspace\u2019s sessions,',
-      '      so it survives restarts; restarting the CLI keeps the list.',
+      '    - For a user provider the id is stored in config.json extraProviders and',
+      '      the first model becomes its default. For nvidia/tokenharbor it goes to',
+      '      this workspace\u2019s .ryuu/preferences.json.',
       '    - The id is stored as typed (letters, digits, . _ : / -; no spaces).',
       '    - Existence, quota and tool-calling support are NOT checked. A bad id',
       '      only fails when the model is used, and that is the user\u2019s risk.',
-      '    - At most ' + MAX_CUSTOM_MODELS + ' added models; /delmodel <model-id> removes one.',
+      '    - Built-in providers hold at most ' + MAX_CUSTOM_MODELS + ' added models;',
+      '      /delmodel <provider> <model-id> removes one.',
     ].join('\n'),
   );
 
   define(
     'delmodel',
-    'Remove a model added with /addmodel from the /model list',
-    '/delmodel <model-id>',
+    'Remove a model from a provider',
+    '/delmodel <provider> <model-id>',
     async (args) => {
-      const name = args.trim();
-      if (!name) {
+      const parts = tokenize(args);
+      if (parts.length < 2) {
         return print(
           [
-            'Usage: /delmodel <model-id>',
-            'Example: /delmodel meta-llama/llama-3.3-70b-instruct',
+            'Usage: /delmodel <provider> <model-id>',
+            'Example: /delmodel river deepseek-ai/DeepSeek-V4.1-Flash-1017',
             'Only ids added with /addmodel can be removed; built-in catalog models stay.',
             'Run /help delmodel for the full tutorial.',
           ].join('\n'),
         );
       }
-      const activeProvider = currentProvider();
-      if ((activeProvider?.models || []).some((entry) => entry.id === name)) {
+      const [reference, name] = parts;
+      const target = findProvider(reference);
+      if (!target) {
         return print(
-          `${name} is a built-in catalog model and cannot be removed (provider ${activeProvider.id}). /delmodel only removes ids added with /addmodel.`,
+          `Unknown provider: ${reference}. Known providers: ${providerList().map((entry) => entry.id).join(', ')}.`,
         );
       }
-      const result = await removeCustomModel(stateDir(), name, currentProviderId());
+
+      if (target.source === 'settings') {
+        const result = await removeExtraProviderModel(target.id, name);
+        if (!result.ok) {
+          if (result.reason === 'absent') {
+            return print(`${name} is not a model for ${target.id}. Run /provider user ${target.id}, then /model to see the list.`);
+          }
+          return print('Could not update config.json. The model list is unchanged.');
+        }
+        await state.reloadProviders?.();
+        const lines = [`Removed ${name} from provider ${target.id} in config.json.`];
+        if (result.models.length === 0) {
+          lines.push(`Provider ${target.id} now has no models; add one with /addmodel ${target.id} <model-id>.`);
+        } else if (target.id === currentProviderId() && config.model === name) {
+          lines.push('It is still the current model for this session; pick another with /model <n>.');
+        }
+        return print(lines.join('\n'));
+      }
+
+      if ((target.models || []).some((entry) => entry.id === name)) {
+        return print(
+          `${name} is a built-in catalog model and cannot be removed (provider ${target.id}). /delmodel only removes ids added with /addmodel.`,
+        );
+      }
+      const result = await removeCustomModel(stateDir(), name, target.id);
       if (!result.ok) {
         if (result.reason === 'missing') {
           return print(
-            `${name} is not in the added-model list. Run /model to see it (built-in ids are listed too).`,
+            `${name} is not in the added-model list for ${target.id}. Run /provider user ${target.id}, then /model to see it (built-in ids are listed too).`,
           );
         }
-        return print(
-          `Could not update ${preferencesFile(stateDir())}. The model list is unchanged.`,
-        );
+        return print(`Could not update ${preferencesFile(stateDir())}. The model list is unchanged.`);
       }
-      const lines = [`Removed ${name} from the model list.`];
-      if (config.model === name) {
-        lines.push(
-          'It is still the current model for this session; pick another with /model <n> or /cmodel <name>.',
-        );
+      const lines = [`Removed ${name} from the model list for ${target.id}.`];
+      if (target.id === currentProviderId() && config.model === name) {
+        lines.push('It is still the current model for this session; pick another with /model <n> or /cmodel <name>.');
       }
       print(lines.join('\n'));
     },
     [
       '  How to use:',
-      '    1. /delmodel vendor/model-name   remove an id added with /addmodel',
-      '    2. /model                        confirm the remaining list',
+      '    1. /delmodel river deepseek-ai/DeepSeek-V4.1-Flash-1017',
+      '    2. /model                      confirm the remaining list',
       '',
       '  Notes:',
+      '    - User providers lose the id from config.json; a built-in provider loses',
+      '      an id added with /addmodel from .ryuu/preferences.json.',
       '    - Built-in catalog models cannot be deleted; only added ids.',
       '    - Removing the current model keeps it selected for this session.',
       '      Choose another with /model <n>, or set one directly with /cmodel <name>.',
-      '    - Removing an id that is not in the added list changes nothing.',
+      '    - Removing the last model of a user provider leaves it unusable until',
+      '      /addmodel adds one again.',
     ].join('\n'),
   );
 

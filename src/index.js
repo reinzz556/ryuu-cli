@@ -67,8 +67,8 @@ While a task runs, slash commands still work; a new prompt waits until it ends.
 
 Documentation: README.md · Secrets: provider keys in config.json, written
 owner-only and never printed. Run ryuu --settings to add them.
-Providers: nvidia, tokenharbor; list them with /provider, or add your own with
-"extraProviders" in config.json.
+Providers: nvidia, tokenharbor; list them with /provider, switch with
+/provider user <name>, or add your own with /provider add <name> <url> [apiKey].
 `;
 
 const SETTINGS_HELP = `Ryuu Agent CLI — global settings

@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { createCommands, parseCommandLine } from '../../src/cli/commands.js';
-import { createTestWorkspace } from '../helpers.js';
+import { buildRawConfig } from '../../src/config/load.js';
+import { readSettings } from '../../src/config/settings.js';
+import { buildProviders, parseExtraProviders } from '../../src/providers/catalog.js';
+import { selectionFor } from '../../src/providers/index.js';
+import { createTestWorkspace, makeTempDir } from '../helpers.js';
 
 /** Renderer stub that captures slash-command output. */
 class LineRecorder {
@@ -140,7 +146,7 @@ test('/help <command> shows usage for one command', async () => {
   }
 });
 
-test('/addmodel and /delmodel change the /model list, and /help documents them', async () => {
+test('/addmodel and /delmodel change one provider\u2019s /model list, and /help documents them', async () => {
   const { commands, renderer, cleanup } = await makeCommands();
   const run = async (line) => {
     renderer.chunks.length = 0;
@@ -148,39 +154,150 @@ test('/addmodel and /delmodel change the /model list, and /help documents them',
     return renderer.text;
   };
   const id = 'meta-llama/llama-3.3-70b-instruct';
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
-    const added = await run(`/addmodel ${id}`);
-    assert.match(added, /Added meta-llama\/llama-3\.3-70b-instruct to the model list \(#\d+\)/);
+    const added = await run(`/addmodel nvidia ${id}`);
+    assert.match(added, /Added meta-llama\/llama-3\.3-70b-instruct to provider nvidia \(#\d+\)/);
     assert.match(added, /not checked|No availability check/);
 
     const list = await run('/model');
     assert.match(list, /0 added|1 added/);
-    assert.match(list, new RegExp(`${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\(added\\)`));
+    assert.match(list, new RegExp(`${escaped}\\s+\\(added\\)`));
 
     // Selecting an added model persists both the choice and the list.
     const index = Number(added.match(/\(#(\d+)\)/)[1]);
     const selected = await run(`/model ${index}`);
-    assert.match(selected, new RegExp(`Model set to ${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.match(selected, new RegExp(`Model set to ${escaped}`));
 
-    assert.match(await run(`/addmodel ${id}`), /already in the model list/);
-    assert.match(await run('/addmodel bad id'), /not a usable model id/);
+    assert.match(await run(`/addmodel nvidia ${id}`), /already in the model list for nvidia/);
+    assert.match(await run('/addmodel nvidia "bad id"'), /not a usable model id/);
+    assert.match(await run('/addmodel nope some/model'), /Unknown provider: nope/);
     assert.match(
-      await run('/delmodel nvidia/nemotron-3.5-super-vl-120b-a12b'),
+      await run('/delmodel nvidia nvidia/nemotron-3.5-super-vl-120b-a12b'),
       /built-in catalog model and cannot be removed/,
     );
 
-    const removed = await run(`/delmodel ${id}`);
-    assert.match(removed, /Removed meta-llama\/llama-3\.3-70b-instruct from the model list/);
+    const removed = await run(`/delmodel nvidia ${id}`);
+    assert.match(removed, /Removed meta-llama\/llama-3\.3-70b-instruct from the model list for nvidia/);
     assert.match(removed, /still the current model for this session/);
     assert.doesNotMatch(await run('/model'), /\(added\)/);
 
     const help = await run('/help addmodel');
     assert.match(help, /How to use:/);
-    assert.match(help, /\/delmodel <model-id>/);
+    assert.match(help, /\/addmodel <provider> <model-id>/);
     assert.match(await run('/help delmodel'), /How to use:/);
     assert.match(await run('/help delmodel'), /cannot be deleted/);
+    assert.match(await run('/help provider'), /\/provider user <name>/);
+    assert.match(await run('/help provider'), /add <name> <url> \[apiKey\]/);
   } finally {
     await cleanup();
+  }
+});
+
+test('/provider add, addmodel, switch and del update config.json in place', async () => {
+  const configDir = await makeTempDir('ryuu-cmd-providers-');
+  const previousDir = process.env.RYUU_CONFIG_DIR;
+  process.env.RYUU_CONFIG_DIR = configDir;
+  await fsp.writeFile(
+    path.join(configDir, 'config.json'),
+    JSON.stringify({ version: 1, providers: { nvidia: { apiKey: 'nvapi-test-key-123456' } } }),
+    'utf8',
+  );
+
+  const { workspace, config, cleanup } = await createTestWorkspace();
+  const renderer = new LineRecorder();
+  const reloadProviders = async () => {
+    const { data } = await readSettings();
+    const raw = buildRawConfig(data, { cwd: workspace.root });
+    config.providers = buildProviders({
+      credentials: raw.providerCredentials,
+      extras: parseExtraProviders(raw.extraProviders, []),
+    });
+    return config.providers;
+  };
+  const switchProvider = async (providerId) => {
+    const selection = selectionFor(config, providerId);
+    Object.assign(config, {
+      providerId: selection.providerId,
+      provider: selection.providerId,
+      providerName: selection.providerName,
+      apiKeyPath: selection.apiKeyPath,
+      apiKey: selection.apiKey,
+      baseURL: selection.baseURL,
+      model: selection.model,
+      capabilities: selection.capabilities,
+    });
+    return { ...selection, persisted: true };
+  };
+  const commands = createCommands({
+    config,
+    workspace,
+    registry: { list: () => [], get: () => null },
+    processes: { list: () => [], getOutput: () => null },
+    sessionStore: { list: async () => [], load: async () => null },
+    undo: { size: 0, entries: [], list: () => [] },
+    renderer,
+    provider: { config, updateSelection: (selection) => Object.assign(config, selection) },
+    interactive: true,
+    getAgent: () => null,
+    getLastSummary: () => null,
+    getActiveTask: () => null,
+    confirmLocal: async () => false,
+    reloadProviders,
+    switchProvider,
+  });
+  const run = async (line) => {
+    renderer.chunks.length = 0;
+    await commands.execute(parseCommandLine(line));
+    return renderer.text;
+  };
+  const readFile = async () => JSON.parse(await fsp.readFile(path.join(configDir, 'config.json'), 'utf8'));
+  const model = 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
+
+  try {
+    const added = await run('/provider add river https://api.river.ai/v1 rv_test_key_123');
+    assert.match(added, /Added provider river \(https:\/\/api\.river\.ai\/v1\)/);
+    assert.match(added, /Key saved/);
+    assert.match(added, /No models yet/);
+    assert.doesNotMatch(added, /rv_test_key_123/);
+
+    const saved = await readFile();
+    assert.equal(saved.extraProviders[0].id, 'river');
+    assert.equal(saved.providers.river.apiKey, 'rv_test_key_123');
+
+    const list = await run('/provider');
+    assert.match(list, /river/);
+    assert.match(list, /key set \(redacted\)/);
+    assert.doesNotMatch(list, /rv_test_key_123/);
+
+    assert.match(await run('/provider user river'), /has no usable model/);
+    assert.ok(
+      (await run(`/addmodel river ${model}`)).includes(`Added ${model} to provider river in config.json (#1)`),
+      'the model is stored for that provider',
+    );
+    assert.equal((await readFile()).extraProviders[0].defaultModel, model);
+
+    const switched = await run('/provider user river');
+    assert.match(switched, /Provider set to river \(river\)/);
+    assert.equal(config.providerId, 'river');
+
+    assert.match(await run(`/addmodel river ${model}`), /already a model for river/);
+    assert.match(await run('/provider del nvidia'), /built-in provider and cannot be removed/);
+    assert.match(await run('/provider del river'), /is the current provider/);
+
+    await run('/provider user nvidia');
+    assert.match(await run(`/delmodel river ${model}`), /Removed .* from provider river/);
+    assert.equal((await readFile()).extraProviders[0].models.length, 0);
+    assert.match(await run('/provider del river'), /Removed provider river/);
+    assert.equal((await readFile()).extraProviders.length, 0);
+
+    assert.match(await run('/provider add river not-a-url'), /not a usable base URL/);
+    assert.match(await run('/provider add nvidia https://api.river.ai/v1'), /built-in provider/);
+  } finally {
+    if (previousDir === undefined) delete process.env.RYUU_CONFIG_DIR;
+    else process.env.RYUU_CONFIG_DIR = previousDir;
+    await cleanup();
+    await fsp.rm(configDir, { recursive: true, force: true });
   }
 });
 

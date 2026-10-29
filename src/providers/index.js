@@ -64,7 +64,10 @@ export function selectionFor(config, providerId, { model = null } = {}) {
   }
   const chosen = requested || normalizeModelId(descriptor.defaultModel) || descriptor.models?.[0]?.id || null;
   if (!chosen) {
-    throw new ProviderError(`Provider ${descriptor.id} has no usable model configured.`, { code: 'INVALID_MODEL' });
+    throw new ProviderError(
+      `Provider ${descriptor.id} has no usable model. Add one with \`/addmodel ${descriptor.id} <model-id>\` or set ${descriptor.modelPath} in config.json.`,
+      { code: 'INVALID_MODEL' },
+    );
   }
   return {
     providerId: descriptor.id,

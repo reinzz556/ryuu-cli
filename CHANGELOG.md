@@ -3,10 +3,18 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.1] - 2026-10-29
 
 ### Ditambahkan
 
+- **Kelola provider dan model langsung dari sesi.** `/provider user <name>`
+  berpindah provider, `/provider add <name> <url> [apiKey]` mendaftarkan provider
+  OpenAI-compatible baru, `/provider del <name>` menghapusnya, dan
+  `/addmodel <provider> <model-id>` / `/delmodel <provider> <model-id>` mengatur
+  daftar model per provider. Provider baru masuk `extraProviders` di
+  `config.json` dan kuncinya ke `providers.<id>.apiKey`; model pertama menjadi
+  default. Provider baru boleh dibuat tanpa model. Provider bawaan dan provider
+  yang sedang aktif tidak bisa dihapus. Kunci tetap tidak pernah dicetak.
 - **`config.json` dibuat otomatis pada run pertama.** Bila file pengaturan belum
   ada, `ensureSettingsFile` menulis scaffold-nya secara atomik dengan izin
   `0600`: `version`, `provider`, `providers.<id>.apiKey`/`baseURL`,
@@ -32,7 +40,7 @@ Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
 - **Model bawaan provider `nvidia` kini `minimaxai/minimax-m3.1-flash`.** Model
   itu masuk katalog sebagai entri ke-6, jadi `/model 6` memilihnya dan startup
-  tanpa `--model`/`NVIDIA_MODEL` memakainya. Lima model sebelumnya
+  tanpa `--model` memakainya. Lima model sebelumnya
   (`nvidia/nemotron-3.5-super-vl-120b-a12b`, `z-ai/glm-5.3-flash`,
   `google/diffusiongemma-26b-a4b-it`, `poolside/laguna-xs-2.1`,
   `stepfun-ai/step-5-preview`) tetap ada dan nomornya tidak bergeser.

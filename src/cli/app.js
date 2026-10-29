@@ -8,6 +8,9 @@ import { createLogger } from '../services/logger.js';
 import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
 import { createActiveProvider, selectionFor } from '../providers/index.js';
+import { buildProviders, parseExtraProviders } from '../providers/catalog.js';
+import { buildRawConfig } from '../config/load.js';
+import { readSettings } from '../config/settings.js';
 import { Agent } from '../agent/agent.js';
 import { ApprovalManager } from '../agent/approvals.js';
 import { Renderer } from './renderer.js';
@@ -261,6 +264,26 @@ export async function createApp({
   }
 
   /**
+   * Re-read config.json and rebuild the provider descriptors.
+   *
+   * `/provider add|del` and `/addmodel|/delmodel` edit the file through
+   * updateSettings; this makes the change visible to the running session
+   * immediately, without restarting the CLI or dropping conversation memory.
+   */
+  async function reloadProviders() {
+    const { data } = await readSettings();
+    const raw = buildRawConfig(data, { cwd: config.workspace });
+    let extras = [];
+    try {
+      extras = parseExtraProviders(raw.extraProviders, []);
+    } catch {
+      extras = [];
+    }
+    config.providers = buildProviders({ credentials: raw.providerCredentials, extras });
+    return config.providers;
+  }
+
+  /**
    * Switch the active provider (used by /provider). The provider object is
    * updated in place, so the agent keeps its conversation memory and worklog.
    */
@@ -304,6 +327,7 @@ export async function createApp({
     getLastSummary: () => lastSummary,
     getActiveTask: () => activeTask,
     switchProvider,
+    reloadProviders,
     providerLimitations,
     cancelActiveTask: () => {
       if (!activeTask) return false;
