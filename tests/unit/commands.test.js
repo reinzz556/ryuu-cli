@@ -255,44 +255,45 @@ test('/provider add, addmodel, switch and del update config.json in place', asyn
   const model = 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
 
   try {
-    const added = await run('/provider add river https://api.river.ai/v1 rv_test_key_123');
-    assert.match(added, /Added provider river \(https:\/\/api\.river\.ai\/v1\)/);
+    const added = await run('/provider add myriver https://api.river.ai/v1 rv_test_key_123');
+    assert.match(added, /Added provider myriver \(https:\/\/api\.river\.ai\/v1\)/);
     assert.match(added, /Key saved/);
     assert.match(added, /No models yet/);
     assert.doesNotMatch(added, /rv_test_key_123/);
 
     const saved = await readFile();
-    assert.equal(saved.extraProviders[0].id, 'river');
-    assert.equal(saved.providers.river.apiKey, 'rv_test_key_123');
+    assert.equal(saved.extraProviders[0].id, 'myriver');
+    assert.equal(saved.providers.myriver.apiKey, 'rv_test_key_123');
 
     const list = await run('/provider');
-    assert.match(list, /river/);
+    assert.match(list, /myriver/);
     assert.match(list, /key set \(redacted\)/);
     assert.doesNotMatch(list, /rv_test_key_123/);
 
-    assert.match(await run('/provider user river'), /has no usable model/);
+    assert.match(await run('/provider user myriver'), /has no usable model/);
     assert.ok(
-      (await run(`/addmodel river ${model}`)).includes(`Added ${model} to provider river in config.json (#1)`),
+      (await run(`/addmodel myriver ${model}`)).includes(`Added ${model} to provider myriver in config.json (#1)`),
       'the model is stored for that provider',
     );
     assert.equal((await readFile()).extraProviders[0].defaultModel, model);
 
-    const switched = await run('/provider user river');
-    assert.match(switched, /Provider set to river \(river\)/);
-    assert.equal(config.providerId, 'river');
+    const switched = await run('/provider user myriver');
+    assert.match(switched, /Provider set to myriver \(myriver\)/);
+    assert.equal(config.providerId, 'myriver');
 
-    assert.match(await run(`/addmodel river ${model}`), /already a model for river/);
+    assert.match(await run(`/addmodel myriver ${model}`), /already a model for myriver/);
     assert.match(await run('/provider del nvidia'), /built-in provider and cannot be removed/);
-    assert.match(await run('/provider del river'), /is the current provider/);
+    assert.match(await run('/provider del myriver'), /is the current provider/);
 
     await run('/provider user nvidia');
-    assert.match(await run(`/delmodel river ${model}`), /Removed .* from provider river/);
+    assert.match(await run(`/delmodel myriver ${model}`), /Removed .* from provider myriver/);
     assert.equal((await readFile()).extraProviders[0].models.length, 0);
-    assert.match(await run('/provider del river'), /Removed provider river/);
+    assert.match(await run('/provider del myriver'), /Removed provider myriver/);
     assert.equal((await readFile()).extraProviders.length, 0);
 
-    assert.match(await run('/provider add river not-a-url'), /not a usable base URL/);
+    assert.match(await run('/provider add myriver not-a-url'), /not a usable base URL/);
     assert.match(await run('/provider add nvidia https://api.river.ai/v1'), /built-in provider/);
+    assert.match(await run('/provider add river https://api.river.ai/v1'), /built-in provider/);
   } finally {
     if (previousDir === undefined) delete process.env.RYUU_CONFIG_DIR;
     else process.env.RYUU_CONFIG_DIR = previousDir;

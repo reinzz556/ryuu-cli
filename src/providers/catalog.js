@@ -38,6 +38,40 @@ export const DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 export const TOKENHARBOR_BASE_URL = 'https://tokenharbor.ai/v1';
 export const TOKENHARBOR_MODEL = 'deepseek-v4.1-flash:free';
 
+export const RIVER_BASE_URL = 'https://api.river.ai/v1';
+export const RIVER_PROVIDER_ID = 'river';
+export const RIVER_DOCS_URL = 'https://docs.river.ai/guides/inference-controls/';
+
+/** River's documented `reasoning_effort` menu, lowest to highest. */
+export const RIVER_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+/** Used when thinking is enabled without an explicit level (River's own rule). */
+export const RIVER_DEFAULT_REASONING_EFFORT = 'high';
+
+/** Model ids `/model` offers for River, default first. */
+export const RIVER_MODEL_CATALOG = [
+  'deepseek-ai/DeepSeek-V4.1-Flash-1017',
+  'deepseek-ai/DeepSeek-V4.1-Flash',
+  'zai-org/GLM-5.3-Flash',
+  'GLM-5.3',
+  'Qwen/Qwen3.8-27B-FP8',
+  'nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4',
+  'nvidia/GLM-5.2-NVFP4',
+  'nvidia/GLM-5.2-NVFP4-262K',
+  'nvidia/Kimi-K2.6-NVFP4',
+  'nvidia/Kimi-K2.6-NVFP4-262K',
+  'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4',
+  'Qwen/Qwen3.5-9B',
+  'Qwen/Qwen3.5-122B-A10B-FP8',
+  'Qwen/Qwen3.5-397B-A17B-FP8',
+  'Qwen/Qwen3.6-35B-A3B-FP8',
+  'XiaomiMiMo/MiMo-V2.6-Flash-RL',
+  'XiaomiMiMo/MiMo-V2.6-Pro-RL',
+];
+export const RIVER_DEFAULT_MODEL = RIVER_MODEL_CATALOG[0];
+
+/** Per-provider request fields a config.json override may carry verbatim. */
+export const PROVIDER_REQUEST_FIELDS = ['reasoningEffort', 'extraBody', 'requestParams', 'thinking'];
+
 /**
  * Built-in providers, in fallback order for key auto-detection.
  *
@@ -68,6 +102,23 @@ export const BUILTIN_PROVIDERS = [
     models: [{ id: TOKENHARBOR_MODEL, name: 'DeepSeek V4.1 Flash Free', default: true }],
     capabilities: { streaming: true, tools: true, reasoning: true, multimodal: false },
     docsUrl: 'https://tokenharbor.ai/',
+  },
+  {
+    // River keeps thinking off by default for its DeepSeek models, so the
+    // dedicated client (providers/river.js) adds `reasoning_effort` to the
+    // request; without it a DeepSeek answer arrives with no reasoning text.
+    id: 'river',
+    name: 'River AI',
+    apiFormat: 'openai-chat-completions',
+    baseURL: RIVER_BASE_URL,
+    defaultModel: RIVER_DEFAULT_MODEL,
+    models: RIVER_MODEL_CATALOG.map((id) => ({
+      id,
+      name: id,
+      ...(id === RIVER_DEFAULT_MODEL ? { default: true } : {}),
+    })),
+    capabilities: { streaming: true, tools: true, reasoning: true, multimodal: false },
+    docsUrl: RIVER_DOCS_URL,
   },
 ];
 
@@ -140,7 +191,40 @@ function normalizeCapabilities(raw, issues, label) {
     }
     out[key] = raw[key];
   }
+  // Vendor extras kept inside capabilities (e.g. River's reasoning effort) are
+  // copied through untouched: the client that knows the field validates it.
+  if (typeof raw.reasoningEffort === 'string' && raw.reasoningEffort.trim()) {
+    out.reasoningEffort = raw.reasoningEffort.trim();
+  }
   return out;
+}
+
+/** Copy the per-provider request overrides the descriptor declares. */
+function mergeRequestFields(entry, raw, label, issues) {
+  for (const field of PROVIDER_REQUEST_FIELDS) {
+    if (raw[field] === undefined) continue;
+    if (field === 'reasoningEffort') {
+      if (typeof raw[field] !== 'string' || !raw[field].trim()) {
+        issues.push(`${label}.reasoningEffort must be a non-empty string`);
+        continue;
+      }
+      entry[field] = raw[field].trim();
+      continue;
+    }
+    if (field === 'thinking') {
+      if (typeof raw[field] !== 'boolean') {
+        issues.push(`${label}.thinking must be true or false`);
+        continue;
+      }
+      entry[field] = raw[field];
+      continue;
+    }
+    if (!raw[field] || typeof raw[field] !== 'object' || Array.isArray(raw[field])) {
+      issues.push(`${label}.${field} must be a JSON object`);
+      continue;
+    }
+    entry[field] = { ...raw[field] };
+  }
 }
 
 /**
@@ -154,7 +238,7 @@ function normalizeCapabilities(raw, issues, label) {
  * `providers.myproxy.apiKey`. Invalid entries are reported as config issues
  * instead of being guessed.
  */
-export function parseExtraProviders(value, issues = []) {
+export function parseExtraProviders(value, issues = [], warnings = []) {
   if (value === undefined || value === null || String(value).trim() === '') return [];
   let parsed;
   try {
@@ -180,7 +264,25 @@ export function parseExtraProviders(value, issues = []) {
       issues.push(`${label}.id must match ${PROVIDER_ID_PATTERN}`);
       continue;
     }
-    if (builtinIds.has(id) || extras.some((provider) => provider.id === id)) {
+    if (builtinIds.has(id)) {
+      // A stale entry for a provider that has since become built-in (River,
+      // for example) is dropped instead of failing startup, as long as it
+      // points at the same endpoint; the built-in descriptor then supplies the
+      // models, capabilities and any vendor request fields.
+      const builtin = BUILTIN_PROVIDERS.find((provider) => provider.id === id);
+      const sameUrl =
+        builtin &&
+        String(raw.baseURL || '').trim().replace(/\/+$/, '') === String(builtin.baseURL).trim().replace(/\/+$/, '');
+      if (sameUrl) {
+        warnings.push(
+          `${label} redeclares the built-in provider "${id}" with the same base URL; the built-in provider is used and this entry is ignored.`,
+        );
+        continue;
+      }
+      issues.push(`${label}.id ${JSON.stringify(id)} is already registered`);
+      continue;
+    }
+    if (extras.some((provider) => provider.id === id)) {
       issues.push(`${label}.id ${JSON.stringify(id)} is already registered`);
       continue;
     }
@@ -206,6 +308,11 @@ export function parseExtraProviders(value, issues = []) {
       capabilities: normalizeCapabilities(raw.capabilities, issues, label),
       docsUrl: null,
       source: 'settings',
+      ...(() => {
+        const entry = {};
+        mergeRequestFields(entry, raw, label, issues);
+        return entry;
+      })(),
     });
   }
   if (parsed.length > MAX_EXTRA_PROVIDERS) {
@@ -231,7 +338,7 @@ export function buildProviders({ credentials = {}, extras = [] } = {}) {
     const model = normalizeModelId(stored.model) || base.defaultModel;
     const models = [...base.models];
     if (model && !models.some((entry) => entry.id === model)) models.push({ id: model, name: model });
-    providers.push({
+    const descriptor = {
       ...base,
       baseURL,
       apiKey,
@@ -240,7 +347,25 @@ export function buildProviders({ credentials = {}, extras = [] } = {}) {
       modelPath: modelPathFor(base.id),
       defaultModel: model,
       models,
-    });
+    };
+    // Per-provider request overrides live next to the key
+    // (`providers.<id>.reasoningEffort`, `providers.<id>.extraBody`, ...). They
+    // travel with the descriptor, so `/provider` keeps them and the client
+    // sends them only to that provider.
+    for (const field of PROVIDER_REQUEST_FIELDS) {
+      const value = stored[field];
+      if (value === undefined) continue;
+      if (field === 'reasoningEffort') {
+        if (typeof value === 'string' && value.trim()) descriptor[field] = value.trim();
+        continue;
+      }
+      if (field === 'thinking') {
+        if (typeof value === 'boolean') descriptor[field] = value;
+        continue;
+      }
+      if (value && typeof value === 'object' && !Array.isArray(value)) descriptor[field] = { ...value };
+    }
+    providers.push(descriptor);
   }
   return providers;
 }

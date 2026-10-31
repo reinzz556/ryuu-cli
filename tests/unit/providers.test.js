@@ -230,13 +230,26 @@ test('unknown providers and malformed model ids are rejected before a request', 
 test('a user provider can start without models and gets one from /addmodel', () => {
   const issues = [];
   const extras = parseExtraProviders(
-    [{ id: 'river', baseURL: 'https://api.river.ai/v1', models: [] }],
+    [{ id: 'myproxy', baseURL: 'https://proxy.example/v1', models: [] }],
     issues,
   );
   assert.deepEqual(issues, []);
   assert.equal(extras.length, 1);
   assert.equal(extras[0].defaultModel, null);
   assert.deepEqual(extras[0].models, []);
+});
+
+test('a provider entry that redeclares a built-in is ignored, not fatal', () => {
+  const issues = [];
+  const warnings = [];
+  const extras = parseExtraProviders(
+    [{ id: 'river', baseURL: 'https://api.river.ai/v1/', models: [] }],
+    issues,
+    warnings,
+  );
+  assert.deepEqual(issues, []);
+  assert.equal(extras.length, 0);
+  assert.match(warnings[0], /redeclares the built-in provider "river"/);
 });
 
 test('extraProviders registers an extra provider without touching the agent', async () => {

@@ -86,6 +86,11 @@ export function buildRawConfig(settings = {}, { cwd = process.cwd() } = {}) {
       baseURL: typeof stored.baseURL === 'string' ? stored.baseURL : '',
       model: '',
     };
+    // Per-provider request overrides (River's `reasoningEffort`, a
+    // pass-through `extraBody`, ...) are stored next to the key.
+    for (const field of ['reasoningEffort', 'thinking', 'extraBody', 'requestParams']) {
+      if (stored[field] !== undefined) credentials[id][field] = stored[field];
+    }
   }
   const storedModels = data.providerModel && typeof data.providerModel === 'object' ? data.providerModel : {};
   for (const [id, model] of Object.entries(storedModels)) {

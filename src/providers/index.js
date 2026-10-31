@@ -1,8 +1,13 @@
 import { ProviderError } from '../utils/errors.js';
 import { ProviderRegistry } from './registry.js';
 import { createProvider as createChatCompletionsProvider } from './nvidia.js';
+// Importing a provider module registers its vendor request fields (River's
+// `reasoning_effort`, for example) with vendor-extras.js.
+import './river.js';
+import './tokenharbor.js';
 import {
   DEFAULT_PROVIDER_ID,
+  PROVIDER_REQUEST_FIELDS,
   normalizeModelId,
   normalizeProviderId,
   providerById,
@@ -12,9 +17,14 @@ import {
  * Provider wiring.
  *
  * Every catalog entry speaks the OpenAI Chat Completions protocol, so they all
- * share one client implementation. The registry exists so a new protocol can be
- * added later without touching the agent: register a factory under its id and
- * the selection code will use it.
+ * share one client implementation. The registry exists so a different protocol
+ * can be added later without touching the agent: register a factory under its
+ * id and the selection code will use it.
+ *
+ * A provider that needs request fields the protocol does not define lives in its
+ * own module (`river.js`, `tokenharbor.js`) and registers a builder with
+ * `vendor-extras.js`; the shared client applies it by provider id, so a
+ * `/provider` switch needs no new instance.
  */
 function factory(config, deps) {
   return createChatCompletionsProvider(config, deps);
@@ -78,6 +88,15 @@ export function selectionFor(config, providerId, { model = null } = {}) {
     apiKey: descriptor.apiKey,
     model: chosen,
     capabilities: { ...(descriptor.capabilities || {}) },
+    // Vendor request overrides (River's reasoningEffort, a transparent
+    // extraBody, ...) travel with the selection so switching provider also
+    // switches which fields the client adds to the request body.
+    ...Object.fromEntries(
+      PROVIDER_REQUEST_FIELDS.filter((field) => descriptor[field] !== undefined).map((field) => [
+        field,
+        descriptor[field],
+      ]),
+    ),
   };
 }
 

@@ -8,7 +8,7 @@ import { createLogger } from '../services/logger.js';
 import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
 import { createActiveProvider, selectionFor } from '../providers/index.js';
-import { buildProviders, parseExtraProviders } from '../providers/catalog.js';
+import { buildProviders, parseExtraProviders, PROVIDER_REQUEST_FIELDS } from '../providers/catalog.js';
 import { buildRawConfig } from '../config/load.js';
 import { readSettings } from '../config/settings.js';
 import { Agent } from '../agent/agent.js';
@@ -306,6 +306,14 @@ export async function createApp({
       baseURL: selection.baseURL,
       model: selection.model,
       capabilities: selection.capabilities,
+      // Vendor request overrides (e.g. River's reasoningEffort) come from the
+      // provider that is now active, not from the one left behind.
+      ...Object.fromEntries(
+        PROVIDER_REQUEST_FIELDS.filter((field) => selection[field] !== undefined).map((field) => [
+          field,
+          selection[field],
+        ]),
+      ),
     });
     const persisted = await writeProviderPreference(stateDir, selection.providerId);
     return { ...selection, persisted };

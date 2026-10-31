@@ -3,6 +3,38 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-10-30
+
+### Ditambahkan
+
+- **River AI jadi provider bawaan, dan reasoning DeepSeek-nya akhirnya tampil.**
+  River mematikan thinking secara default untuk `DeepSeek-V4.1-Flash-1017` dan
+  `DeepSeek-V4.1-Flash`, sehingga respons hanya berisi `content` dan kotak
+  `◈ reasoning` tidak pernah muncul. Modul baru `src/providers/river.js`
+  mengirim `reasoning_effort` (default `high`) lewat tabel field request
+  `src/providers/vendor-extras.js` yang dibaca klien bersama sebelum setiap
+  request. Prioritas nilai: `RYUU_RIVER_REASONING_EFFORT` → `reasoningEffort` di
+  `config.json` → `RYUU_REASONING_EFFORT` → `capabilities.reasoningEffort`.
+  Level yang tidak didukung model diturunkan ke level aman model itu dan dicatat
+  di log, jadi request tidak pernah gagal karena field ini.
+- **Modul klien per vendor.** `tokenharbor.js` menyusul `river.js` sebagai
+  pemilik default provider-nya; provider kustom tetap memakai template
+  `nvidia.js` tanpa perubahan kode, dan kini bisa membawa field request sendiri
+  lewat `extraBody`/`requestParams` di entri `extraProviders`.
+
+### Diubah
+
+- Provider bawaan menjadi `nvidia`, `tokenharbor`, dan `river`, masing-masing
+  dengan daftar model default-nya sendiri (River: DeepSeek, GLM-5.3,
+  Qwen3.8-27B, Nemotron-3.5-Super-VL). `/model` dan `/provider` menampilkannya
+  tanpa entri `extraProviders`.
+- Entri `extraProviders` lama yang mendeklarasikan ulang provider bawaan dengan
+  base URL yang sama (misalnya `river`) kini diabaikan dengan peringatan, bukan
+  menggagalkan startup. Id bawaan dengan URL berbeda tetap ditolak.
+- `extraProviders` menerima `reasoningEffort`, `thinking`, `extraBody`, dan
+  `requestParams`; nilai-nilainya dibawa bersama pilihan provider sehingga
+  `/provider` tidak menghapusnya.
+
 ## [0.3.1] - 2026-10-29
 
 ### Ditambahkan

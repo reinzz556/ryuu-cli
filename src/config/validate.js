@@ -5,6 +5,7 @@ import {
   DEFAULT_PROVIDER_ID,
   MAX_MODEL_ID_LENGTH,
   MODEL_ID_PATTERN,
+  PROVIDER_REQUEST_FIELDS,
   buildProviders,
   isCatalogModel,
   parseExtraProviders,
@@ -142,7 +143,7 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
   // come from config.json only.
   const providerCredentials =
     raw.providerCredentials && typeof raw.providerCredentials === 'object' ? raw.providerCredentials : {};
-  const extraProviders = parseExtraProviders(raw.extraProviders, issues);
+  const extraProviders = parseExtraProviders(raw.extraProviders, issues, warnings);
   const providers = buildProviders({ credentials: providerCredentials, extras: extraProviders });
 
   const explicitProvider = raw.provider ? String(raw.provider).trim().toLowerCase() : null;
@@ -372,6 +373,15 @@ export function validateConfig(raw = {}, { requireApiKey = true, cwd = raw.cwd |
       apiKey,
       model,
       baseURL,
+      // Per-provider request overrides reach the client through the effective
+      // config: a user provider may declare a vendor field such as River's
+      // reasoningEffort, and `switchProvider` has no entry for it.
+      ...Object.fromEntries(
+        PROVIDER_REQUEST_FIELDS.filter((field) => activeProvider[field] !== undefined).map((field) => [
+          field,
+          activeProvider[field],
+        ]),
+      ),
       workspace,
       logLevel,
       approvalPolicy,

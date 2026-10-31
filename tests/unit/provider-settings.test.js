@@ -34,22 +34,22 @@ async function withConfig(run) {
 
 test('adding a provider stores the URL and optional key, and is idempotent for the key', async () => {
   await withConfig(async ({ read }) => {
-    const added = await addExtraProvider({ name: 'river', baseURL: 'https://api.river.ai/v1/', apiKey: 'rv-test' });
+    const added = await addExtraProvider({ name: 'myriver', baseURL: 'https://api.river.ai/v1/', apiKey: 'rv-test' });
     assert.equal(added.ok, true);
-    assert.equal(added.id, 'river');
+    assert.equal(added.id, 'myriver');
     assert.equal(added.baseURL, 'https://api.river.ai/v1');
     const saved = await read();
-    assert.equal(saved.extraProviders[0].id, 'river');
+    assert.equal(saved.extraProviders[0].id, 'myriver');
     assert.equal(saved.extraProviders[0].models.length, 0);
-    assert.equal(saved.providers.river.apiKey, 'rv-test');
+    assert.equal(saved.providers.myriver.apiKey, 'rv-test');
 
-    const duplicate = await addExtraProvider({ name: 'river', baseURL: 'https://api.river.ai/v1' });
+    const duplicate = await addExtraProvider({ name: 'myriver', baseURL: 'https://api.river.ai/v1' });
     assert.equal(duplicate.ok, false);
     assert.equal(duplicate.reason, 'exists');
 
-    const updated = await addExtraProvider({ name: 'river', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-new' });
+    const updated = await addExtraProvider({ name: 'myriver', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-new' });
     assert.equal(updated.ok, true);
-    assert.equal((await read()).providers.river.apiKey, 'rv-new');
+    assert.equal((await read()).providers.myriver.apiKey, 'rv-new');
     assert.equal((await read()).extraProviders.length, 1);
   });
 });
@@ -62,52 +62,53 @@ test('invalid names, URLs and built-ins are refused without touching the file', 
     assert.equal((await addExtraProvider({ name: 'nvidia', baseURL: 'https://x/v1' })).reason, 'builtin');
     assert.equal((await read()).extraProviders, undefined);
     assert.equal(isBuiltinProviderId('tokenharbor'), true);
-    assert.equal(isBuiltinProviderId('river'), false);
+    assert.equal(isBuiltinProviderId('river'), true);
   });
 });
 
 test('models are added per provider, the first becomes the default, and removal recomputes it', async () => {
   await withConfig(async ({ read }) => {
-    await addExtraProvider({ name: 'river', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-test' });
-    const first = await addExtraProviderModel('river', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
+    await addExtraProvider({ name: 'myriver', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-test' });
+    const first = await addExtraProviderModel('myriver', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
     assert.equal(first.ok, true);
     assert.deepEqual(first.models, ['deepseek-ai/DeepSeek-V4.1-Flash-1017']);
     assert.equal((await read()).extraProviders[0].defaultModel, 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
 
-    const second = await addExtraProviderModel('river', 'zai-org/GLM-5.3-Flash');
+    const second = await addExtraProviderModel('myriver', 'zai-org/GLM-5.3-Flash');
     assert.equal(second.ok, true);
     assert.deepEqual(second.models, ['deepseek-ai/DeepSeek-V4.1-Flash-1017', 'zai-org/GLM-5.3-Flash']);
     assert.equal((await read()).extraProviders[0].defaultModel, 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
 
-    assert.equal((await addExtraProviderModel('river', 'zai-org/GLM-5.3-Flash')).reason, 'exists');
-    assert.equal((await addExtraProviderModel('river', 'bad model')).reason, 'invalid');
+    assert.equal((await addExtraProviderModel('myriver', 'zai-org/GLM-5.3-Flash')).reason, 'exists');
+    assert.equal((await addExtraProviderModel('myriver', 'bad model')).reason, 'invalid');
     assert.equal((await addExtraProviderModel('nope', 'some/model')).reason, 'missing');
     assert.equal((await addExtraProviderModel('nvidia', 'some/model')).reason, 'builtin');
 
-    const removed = await removeExtraProviderModel('river', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
+    const removed = await removeExtraProviderModel('myriver', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
     assert.equal(removed.ok, true);
     assert.deepEqual(removed.models, ['zai-org/GLM-5.3-Flash']);
     assert.equal(removed.defaultModel, 'zai-org/GLM-5.3-Flash');
-    assert.equal((await removeExtraProviderModel('river', 'not/there')).reason, 'absent');
+    assert.equal((await removeExtraProviderModel('myriver', 'not/there')).reason, 'absent');
   });
 });
 
 test('removing a provider deletes its key, model and definition, and refuses built-ins or the active one', async () => {
   await withConfig(async ({ read }) => {
-    await addExtraProvider({ name: 'river', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-test' });
-    await addExtraProviderModel('river', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
+    await addExtraProvider({ name: 'myriver', baseURL: 'https://api.river.ai/v1', apiKey: 'rv-test' });
+    await addExtraProviderModel('myriver', 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
     const settings = await readSettings();
     assert.equal(readExtraProviders(settings.data).length, 1);
 
-    assert.equal((await removeExtraProvider('river', { active: true })).reason, 'active');
+    assert.equal((await removeExtraProvider('myriver', { active: true })).reason, 'active');
     assert.equal((await removeExtraProvider('nvidia')).reason, 'builtin');
+    assert.equal((await removeExtraProvider('river')).reason, 'builtin');
     assert.equal((await removeExtraProvider('nope')).reason, 'missing');
 
-    const removed = await removeExtraProvider('river');
+    const removed = await removeExtraProvider('myriver');
     assert.equal(removed.ok, true);
     const saved = await read();
     assert.deepEqual(saved.extraProviders, []);
-    assert.equal(saved.providers?.river, undefined);
+    assert.equal(saved.providers?.myriver, undefined);
     assert.equal(readExtraProviders(saved).length, 0);
   });
 });

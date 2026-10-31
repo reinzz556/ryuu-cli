@@ -2,7 +2,8 @@ import OpenAI from 'openai';
 import { CancelledError, ProviderError, isRecoverableError } from '../utils/errors.js';
 import { redact } from '../utils/redaction.js';
 import { toToolArgumentsString } from '../utils/validation.js';
-import { MODEL_ID_PATTERN, MAX_MODEL_ID_LENGTH } from './catalog.js';
+import { MODEL_ID_PATTERN, MAX_MODEL_ID_LENGTH, PROVIDER_REQUEST_FIELDS } from './catalog.js';
+import { applyRequestExtras } from './vendor-extras.js';
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8000;
@@ -348,6 +349,18 @@ export class NvidiaProvider {
     return this.config.capabilities || null;
   }
 
+  /**
+   * Extra top-level fields to merge into the request body before it is sent.
+   *
+   * The OpenAI Chat Completions protocol defines no vendor fields, so the
+   * builder comes from `vendor-extras.js`, where a provider module registers
+   * itself by id (River's `reasoning_effort`, for example). Registration is by
+   * id because one instance is reused across `/provider` switches.
+   */
+  requestExtras(context = {}) {
+    return applyRequestExtras(this.config, { ...context, logger: this.logger });
+  }
+
   get providerId() {
     return this.config.providerId || null;
   }
@@ -364,7 +377,7 @@ export class NvidiaProvider {
    * Repoint this provider at another provider or model without rebuilding the
    * agent (conversation memory and the worklog stay intact).
    */
-  updateSelection({ providerId, providerName, apiKeyPath, docsUrl = null, baseURL, apiKey, model, capabilities = null } = {}) {
+  updateSelection({ providerId, providerName, apiKeyPath, docsUrl = null, baseURL, apiKey, model, capabilities = null, ...vendor } = {}) {
     if (!apiKey) {
       const path = apiKeyPath || `providers.${providerId || 'unknown'}.apiKey`;
       throw new ProviderError(
@@ -386,6 +399,14 @@ export class NvidiaProvider {
       model: model || this.config.model,
       capabilities: capabilities || this.config.capabilities || null,
     });
+    // Vendor request fields (River's `reasoningEffort`, a pass-through
+    // `extraBody`, ...) belong to the provider that is now active. The values
+    // of the provider left behind are dropped, so a request never carries a
+    // field meant for another endpoint.
+    for (const field of PROVIDER_REQUEST_FIELDS) {
+      delete this.config[field];
+      if (vendor[field] !== undefined) this.config[field] = vendor[field];
+    }
     if (!this.externalClient) this.client = this.#createClient();
     return this;
   }
@@ -441,6 +462,11 @@ export class NvidiaProvider {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
+    // Vendor extensions (e.g. River's `reasoning_effort`, which turns thinking
+    // on for models whose default is off). The base client adds nothing; a
+    // provider-specific subclass overrides requestExtras().
+    const extras = this.requestExtras({ capabilities, streaming });
+    if (extras && typeof extras === 'object') Object.assign(body, extras);
 
     const startedAt = Date.now();
     const effectiveTimeout = Math.max(1000, Number(timeoutMs ?? this.config.requestTimeoutMs) || 1000);

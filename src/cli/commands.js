@@ -24,6 +24,7 @@ import {
   writeModelPreference,
 } from '../services/preferences.js';
 import { describeConfig } from '../config/validate.js';
+import { describeReasoning } from '../providers/river.js';
 import { formatDoctor, runDoctor } from '../services/doctor.js';
 import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { PROVIDER_INFO } from '../services/websearch/providers.js';
@@ -261,12 +262,16 @@ export function createCommands(state) {
   define('status', 'Show provider, model, workspace, limits and the last task result', '/status', async () => {
     const last = state.getLastSummary();
     const running = processes.list({ includeCompleted: false }).filter((proc) => proc.status === 'running');
+    // The reasoning effort that will actually be sent, so a provider that
+    // thinks only when asked (River's DeepSeek models) is visible at a glance.
+    const reasoningLine = describeReasoning(config);
     const lines = [
       `model        ${config.model}`,
       `provider     ${config.providerName || 'NVIDIA Integrate API'} (${currentProviderId()})`,
       `endpoint     ${config.baseURL}`,
       `key          ${config.apiKeyPath || 'providers.nvidia.apiKey'} ${config.apiKey ? 'set (redacted)' : '(not set)'}`,
       `caps         ${capabilityText(config.capabilities)}`,
+      ...(reasoningLine ? [`reasoning    ${reasoningLine}`] : []),
       `workspace    ${workspace.root}`,
       `node         ${process.version} (${process.platform})`,
       `approval     ${config.approvalPolicy}`,

@@ -565,7 +565,8 @@ Kuncinya disimpan seperti provider lain, yaitu `providers.myproxy.apiKey`, dan
 bisa diisi lewat `ryuu --settings` setelah provider terdaftar.
 
 - `id`, `name`, dan `baseURL` wajib. `models` boleh kosong saat baru dibuat dan
-  diisi lewat `/addmodel`; `id` tidak boleh menabrak provider bawaan.
+  diisi lewat `/addmodel`; `id` tidak boleh menabrak provider bawaan (`nvidia`,
+  `tokenharbor`, `river`).
 - `capabilities` menentukan apakah agent mengirim tools (`tools`), meminta
   stream (`streaming`), dan menampilkan reasoning bila provider mengirimnya
   (`reasoning`). Jangan menyalakan `tools` untuk endpoint yang tidak mendukung
@@ -577,6 +578,58 @@ bisa diisi lewat `ryuu --settings` setelah provider terdaftar.
 - Tidak ada fallback otomatis antar-provider AI. Kegagalan provider aktif
   dilaporkan apa adanya (dengan retry terbatas untuk kegagalan sesaat) agar
   kunci dan data tidak berpindah ke provider lain tanpa keputusan Anda.
+
+#### Provider bawaan dan modul klien per vendor (`src/providers/`)
+
+Tiga provider dikenali tanpa entri `extraProviders`: `nvidia`, `tokenharbor`,
+dan `river`. Masing-masing punya modul sendiri di `src/providers/`:
+
+| Modul | Provider | Isi |
+| --- | --- | --- |
+| `nvidia.js` | `nvidia` | Klien Chat Completions bersama (dipakai semua provider OpenAI-compatible), retry, streaming, ekstraksi reasoning. |
+| `tokenharbor.js` | `tokenharbor` | Default provider + pass-through `extraBody`/`requestParams`. |
+| `river.js` | `river` | Menambahkan `reasoning_effort` (lihat di bawah) dan profil reasoning per model. |
+| `vendor-extras.js` | — | Tabel field request per provider; klien bersama bertanya ke sini sebelum setiap request. |
+
+Karena ketiganya bawaan, `extraProviders` **tidak boleh** memakai id yang sama.
+Entri lama untuk `river` yang menunjuk base URL yang sama tetap diterima: entri
+itu diabaikan dengan peringatan, bukan menggagalkan startup, dan descriptor
+bawaan yang dipakai (daftar model, kapabilitas, field vendor). Provider kustom
+lainnya tetap memakai template `nvidia.js` tanpa perubahan kode; field request
+tambahan bisa diberikan lewat `extraBody`/`requestParams` di entrinya:
+
+```json
+{ "id": "myproxy", "baseURL": "https://proxy.example/v1",
+  "extraBody": { "top_k": 40 }, "requestParams": { "reasoning_effort": "high" } }
+```
+
+#### Reasoning DeepSeek di River AI
+
+River mematikan thinking secara default untuk `DeepSeek-V4.1-Flash-1017` dan
+`DeepSeek-V4.1-Flash`: tanpa `reasoning_effort` di body request, respons hanya
+berisi `content`, dan tidak ada teks reasoning untuk ditampilkan. `river.js`
+mengirim field itu otomatis (dokumentasi: <https://docs.river.ai/guides/inference-controls/>):
+
+- Default: `high` untuk kedua model DeepSeek, sehingga reasoning langsung muncul
+  di UI dan di `.ryuu/logs/reasoning/`.
+- Model River lain (`GLM-5.3`, `GLM-5.3-Flash`, `Qwen3.8-27B-FP8`,
+  `Nemotron-3.5-Super-VL-120B`) sudah reasoning secara default dan tidak dipaksa
+  — effort hanya dikirim bila Anda memintanya.
+- Urutan prioritas: env `RYUU_RIVER_REASONING_EFFORT` → `reasoningEffort` di
+  `config.json` → env `RYUU_REASONING_EFFORT` → `capabilities.reasoningEffort`
+  di entri provider.
+- Nilai yang diterima: `none|low|medium|high|xhigh|max` (plus `off`/`on`).
+  Level yang tidak didukung model akan diturunkan ke level aman model itu dan
+  dicatat di log, jadi request tidak gagal.
+
+Contoh mematikan reasoning River lewat `config.json`:
+
+```json
+{ "provider": "river", "reasoningEffort": "none" }
+```
+
+`capabilities.reasoning` hanya label tampilan di `/provider`; reasoning tetap
+ditampilkan selama provider benar-benar mengirim `reasoning_content`.
 
 ## Tool yang tersedia untuk model
 
@@ -839,10 +892,13 @@ src/
     planner.js          prompt sesi, task brief, ekstraksi rencana, ringkasan
     worklog.js          fakta sesi terverifikasi yang dipakai ulang antar langkah dan tugas
   providers/
-    catalog.js          katalog provider + model, kapabilitas, validasi id, extraProviders
+    catalog.js          katalog provider + model (nvidia, tokenharbor, river), kapabilitas, extraProviders
     registry.js         registry provider dinamis (factory per id)
     index.js            pembuatan provider aktif dan resolusi pilihan provider/model
     nvidia.js           klien SDK OpenAI (dipakai semua provider), normalisasi, retry, pemetaan galat
+    tokenharbor.js      provider Token Harbor: default dan pass-through field request
+    river.js            provider River AI: reasoning_effort untuk DeepSeek + profil reasoning per model
+    vendor-extras.js    tabel field request per provider yang dibaca klien bersama
   tools/
     registry.js         allowlist, skema, risiko, antarmuka plugin
     filesystem.js       baca/tulis/edit/pindah/hapus/diff file
