@@ -72,15 +72,6 @@ function emptyResponseNudge(attempt) {
 }
 
 /**
- * How many cut-off responses are re-asked before the task is stopped.
- *
- * Unlike an empty response, a truncated one is not transient: the model is
- * producing more than `maxOutputTokens` allows, so the retry has to be bounded
- * or the loop would only end at the task deadline.
- */
-const MAX_TRUNCATED_RESPONSES = 3;
-
-/**
  * Wording that gets a response cut off at the output-token cap going again.
  *
  * The tool call it was writing came back unparseable, so the provider dropped
@@ -93,10 +84,57 @@ function truncatedResponseNudge(attempt) {
     'That response hit the output-token cap again, so the call was discarded and nothing ran. Skip the preamble and act in pieces: one small tool call per step instead of one large one.',
     'Cut off at the token cap once more. No work was lost, but nothing after the cut was executed: issue a single minimal tool call now, or give the final answer without repeating what is already done.',
     'The response keeps hitting the output-token limit. Emit the smallest possible next action immediately — one short tool call or the final answer, no explanation first.',
-  ];
-  return nudges[Math.min(Math.max(0, attempt - 1), nudges.length - 1)];
+  ];  return nudges[Math.max(0, attempt - 1) % nudges.length];
 }
 
+
+/** Phrases that announce a future action instead of reporting a result. */
+const INTENT_PATTERNS = [
+  /\b(let me|let's)\b/i,
+  /\b(i'?ll|i will|i'?m going to|i am going to)\b/i,
+  /\b(now i|then i)\b/i,
+  /\b(saya akan|saya lanjut|mari saya|izinkan saya|selanjutnya saya|berikutnya saya)\b/i,
+  /\b(langkah (pertama|selanjutnya|berikutnya))\b/i,
+];
+
+/** Phrases that hand control back to the user, which a real answer may do. */
+const HANDOFF_PATTERNS = /\b(let me know|feel free|kabari|beri tahu saya|mau saya|ingin saya)\b/i;
+
+/**
+ * Is this text an end-of-turn announcement rather than an answer?
+ *
+ * A model that writes "Edit applied. Let me verify the syntax…" and stops has
+ * not finished the task: the verification it just promised never ran. Only the
+ * closing sentences are inspected, so a recap that happens to quote an earlier
+ * intention is not mistaken for one, and an answer that asks the user something
+ * or offers follow-up work is left alone.
+ */
+export function looksLikeIntentOnly(content = '') {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  if (HANDOFF_PATTERNS.test(text)) return false;
+  // A closing question is addressed to the user, not to the task.
+  if (/\?\s*$/.test(text)) return false;
+  const sentences = text.split(/(?<=[.!?:])\s+/).filter(Boolean);
+  const closing = sentences.slice(-2).join(' ');
+  return INTENT_PATTERNS.some((pattern) => pattern.test(closing));
+}
+
+/**
+ * Wording that turns an announcement back into the action it described.
+ *
+ * Rotated cyclically and never capped: the task ends only when the model
+ * actually finishes, the wall clock runs out, or the user cancels.
+ */
+function intentOnlyNudge(attempt) {
+  const nudges = [
+    'Your last message announced an action but made no tool call, so nothing you described was executed. Call the tool for that action now. If the task is genuinely finished, state the result and the evidence a tool already produced — never the step you are about to take.',
+    'Again no tool call: the run cannot continue from a description of the next step. Issue the call itself (or the remaining calls) in this response, in one or two small calls.',
+    'Still only prose about the next step, and nothing ran. The next output must be the tool call that does the work — one small call is enough; do not explain it first.',
+    `No tool call for ${attempt} turns in a row now. Stop describing and act: emit the call that edits, reads, or runs the thing you keep announcing, and keep going until the task is genuinely done.`,
+  ];
+  return nudges[Math.max(0, attempt - 1) % nudges.length];
+}
 
 /**
  * Replace invalid `function.arguments` in a message history with valid JSON.
@@ -265,8 +303,17 @@ export class Agent {
     const evidence = [files.length > 0 ? `files: ${files.join(', ')}` : '', ran.length > 0 ? `commands: ${ran.join('; ')}` : '']
       .filter(Boolean)
       .join(' · ');
+    // Only a task that actually answered may be remembered as an assistant
+    // turn. A cancelled/failed/truncated run has no answer, and a model that
+    // finds one in the history tends to replay it verbatim for the next task
+    // ("Task cancelled. No further tool calls were executed.") instead of
+    // working — which then looked like a one-step completion.
+    const answered = status === 'completed' || status === 'step-limit';
+    const body = answered
+      ? finalText || `(no final answer; task ended with status: ${status})`
+      : `(runtime record, not an answer: this task ended with status ${status} and produced no answer. Do not quote this line or its status — continue the work from the worklog.)`;
     const reply = [
-      finalText || `(no final answer; task ended with status: ${status})`,
+      body,
       evidence ? `[evidence] status=${status} · ${evidence}` : `[evidence] status=${status}`,
     ].join('\n');
     this.conversation.push({ role: 'user', content: task }, { role: 'assistant', content: reply });
@@ -717,6 +764,7 @@ export class Agent {
     try {
       let emptyResponses = 0;
       let truncatedResponses = 0;
+      let intentOnlyAnswers = 0;
       let finished = false;
       for (let step = 1; step <= stepLimit; step += 1) {
         checkAbort();
@@ -831,41 +879,33 @@ export class Agent {
           // leftover text as the answer reported the task as "completed" with
           // nothing changed — the worst possible outcome for a long run.
           if (truncated) {
+            // Unlimited, like an empty turn: the task ends only when the model
+            // actually finishes, the wall clock runs out, or the user cancels.
+            // The backoff keeps a model that always overruns the token cap
+            // from hammering the provider.
             truncatedResponses += 1;
-            if (truncatedResponses <= MAX_TRUNCATED_RESPONSES) {
-              if (response.content) messages.push({ role: 'assistant', content: response.content });
-              messages.push({ role: 'user', content: truncatedResponseNudge(truncatedResponses) });
-              const retryBase = Math.max(100, Number(this.config.recoveryBackoffMs ?? 500));
-              const delayMs = Math.min(15000, retryBase * 2 ** Math.min(truncatedResponses - 1, 5));
-              this.#emit('heartbeat', {
-                phase: 'retry',
-                step,
-                attempt: truncatedResponses,
-                maxAttempts: MAX_TRUNCATED_RESPONSES,
-                delayMs,
-                code: 'TRUNCATED_RESPONSE',
-                message: 'Cut off at the output-token cap — asking for a smaller call.',
-              });
-              this.logger?.warn('response truncated at the token cap; retrying', {
-                step,
-                attempt: truncatedResponses,
-                delayMs,
-              });
-              await abortableDelay(delayMs, signal);
-              // Repeating this turn must not eat the step budget either.
-              step -= 1;
-              continue;
-            }
-            // The retry budget is spent: stop honestly instead of claiming a
-            // completion that no tool result ever backed.
-            status = 'truncated';
-            finished = true;
-            finalText = `The response was cut off at the output-token limit ${MAX_TRUNCATED_RESPONSES} times in a row, so the task was stopped instead of being reported as complete. Nothing further was executed. Raise agent.maxOutputTokens (this run used ${this.config.maxOutputTokens}) or split the task into a smaller one, then continue.`;
-            session.issues.push(
-              `Stopped: the model hit the ${this.config.maxOutputTokens}-output-token cap before it could finish a tool call.`,
-            );
-            this.logger?.warn('task stopped after repeated truncation', { step, attempts: truncatedResponses });
-            break;
+            if (response.content) messages.push({ role: 'assistant', content: response.content });
+            messages.push({ role: 'user', content: truncatedResponseNudge(truncatedResponses) });
+            const retryBase = Math.max(100, Number(this.config.recoveryBackoffMs ?? 500));
+            const delayMs = Math.min(15000, retryBase * 2 ** Math.min(truncatedResponses - 1, 5));
+            this.#emit('heartbeat', {
+              phase: 'retry',
+              step,
+              attempt: truncatedResponses,
+              maxAttempts: 0,
+              delayMs,
+              code: 'TRUNCATED_RESPONSE',
+              message: `Cut off at the output-token cap (attempt ${truncatedResponses}) — asking for a smaller call.`,
+            });
+            this.logger?.warn('response truncated at the token cap; retrying', {
+              step,
+              attempt: truncatedResponses,
+              delayMs,
+            });
+            await abortableDelay(delayMs, signal);
+            // Repeating this turn must not eat the step budget either.
+            step -= 1;
+            continue;
           }
 
           if (!content) {
@@ -893,6 +933,35 @@ export class Agent {
             step -= 1;
             continue;
           }
+          // An answer that only announces the next action is not an answer:
+          // the run used to end with "Edit applied. Let me verify…" while the
+          // verification it promised never ran, and reported that as completed.
+          // Re-ask for the call itself, bounded, then stop honestly.
+          if (looksLikeIntentOnly(content)) {
+            // Unlimited, exactly like an empty turn: the announcement is not an
+            // answer, so the task only ends when the work is really done, the
+            // deadline passes, or the user cancels.
+            intentOnlyAnswers += 1;
+            messages.push({ role: 'assistant', content });
+            messages.push({ role: 'user', content: intentOnlyNudge(intentOnlyAnswers) });
+            this.#emit('heartbeat', {
+              phase: 'retry',
+              step,
+              attempt: intentOnlyAnswers,
+              maxAttempts: 0,
+              delayMs: 0,
+              code: 'UNFINISHED_ANSWER',
+              message: 'The answer announced the next action without calling its tool — asking for the call.',
+            });
+            this.logger?.warn('answer announced an action with no tool call; re-asking', {
+              step,
+              attempt: intentOnlyAnswers,
+            });
+            checkAbort();
+            // Re-asking must not eat the optional --max-steps budget.
+            step -= 1;
+            continue;
+          }
           finalText = content;
           status = 'completed';
           finished = true;
@@ -900,6 +969,7 @@ export class Agent {
         }
         emptyResponses = 0;
         truncatedResponses = 0;
+        intentOnlyAnswers = 0;
         if (response.content) {
           // When the answer already streamed live, the text is already on screen.
           const streamed = typeof this.renderer?.streamedResponse === 'function' && this.renderer.streamedResponse();

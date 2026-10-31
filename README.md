@@ -783,12 +783,33 @@ berpura-pura sebaliknya.
 - `finish_reason: \"length\"` ditangani: pemanggilan tool yang terpotong pada
   batas token output dibuang dan dilaporkan, tidak pernah dieksekusi sebagai
   file yang tertulis setengah jalan. Respons yang terpotong **tanpa** tool call
-  yang utuh juga tidak pernah dianggap jawaban akhir: model diminta mengulang
-  dengan panggilan yang lebih kecil (maksimum 3 kali, terlihat sebagai
-  heartbeat `TRUNCATED_RESPONSE`), dan bila tetap terpotong tugas dihentikan
-  dengan status `truncated` — bukan `completed` yang palsu. Sisa teks yang
-  terpotong tetap masuk riwayat percakapan supaya model melanjutkan, bukan
-  mengulang analisis.
+  yang utuh juga tidak pernah dianggap jawaban akhir: sisa teksnya tetap masuk
+  riwayat supaya model melanjutkan (bukan mengulang analisis), lalu model diminta
+  mengulang dengan panggilan yang lebih kecil (heartbeat `TRUNCATED_RESPONSE`,
+  backoff eksponensial). Pengulangan itu **tanpa batas percobaan** — sama seperti
+  giliran kosong, hanya `/cancel` atau tenggat tugas yang menghentikannya.
+- Jawaban yang hanya **mengumumkan** langkah berikutnya ("Edit applied. Let me
+  verify the syntax…") juga tidak mengakhiri tugas: pengumuman itu masuk riwayat
+  dan model diminta mengirim tool call yang dijanjikannya sendiri (heartbeat
+  `UNFINISHED_ANSWER`, wording berputar, tanpa batas percobaan). Jadi run tidak
+  bisa berhenti sebagai `completed` dengan pekerjaan yang belum dijalankan.
+  Kalimat yang bertanya atau menawarkan lanjutan ke pengguna ("let me know",
+  "mau saya") tetap diterima sebagai jawaban akhir.
+- Tugas yang berakhir `cancelled`/`failed` tidak disimpan sebagai jawaban
+  asisten, hanya sebagai catatan runtime internal, sehingga tugas berikutnya
+  tidak memantulkannya sebagai jawabannya sendiri.
+- Respons tanpa tool call memang mengakhiri tugas, jadi jawaban yang kalimat
+  penutupnya hanya merencanakan aksi (`let me…`, `now I'll…`, `saya akan…`,
+  `langkah selanjutnya…`) tidak diterima sebagai hasil: model diminta mengirim
+  tool call-nya sendiri (heartbeat `UNFINISHED_ANSWER`, maksimum 2 kali, tanpa
+  memakan langkah), dan bila tetap mengumumkan tugas berhenti dengan status
+  `incomplete` (`✕ ended without finishing`) alih-alih `completed`. Kalimat yang
+  bertanya atau menawarkan lanjutan kepada Anda tetap dianggap jawaban akhir.
+- Hanya tugas yang benar-benar menjawab (`completed`/`step-limit`) yang disimpan
+  sebagai jawaban di memori percakapan. Tugas `cancelled`, `failed`,
+  `truncated`, atau `incomplete` dicatat sebagai catatan runtime internal, jadi
+  tugas berikutnya tidak bisa memantulkan kembali "Task cancelled. No further
+  tool calls were executed." sebagai jawabannya sendiri.
 - Pada 70% anggaran waktu, model diberi tahu untuk menyatu (konvergen), dan
   aliran respons yang tidak mengirim byte selama
   `agent.streamIdleTimeoutMs` dibatalkan dengan `STREAM_STALLED` alih-alih

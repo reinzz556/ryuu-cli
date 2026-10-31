@@ -816,20 +816,24 @@ test('a response cut off before its tool call never ends the task as completed',
   }
 });
 
-test('repeated truncation stops the task as truncated instead of faking completion', async () => {
-  const responses = Array.from({ length: 4 }, (_, index) => ({
-    ...response({ content: `Answer attempt ${index} that never reaches a tool call.` }),
-    finishReason: 'length',
-  }));
-  const ctx = await setup({ responses });
+test('repeated truncation keeps being re-asked with no attempt cap', async () => {
+  const responses = [
+    ...Array.from({ length: 4 }, (_, index) => ({
+      ...response({ content: `Answer attempt ${index} that never reaches a tool call.` }),
+      finishReason: 'length',
+    })),
+    response({ content: 'Wrote src/launcher.js in smaller pieces and verified it with node --check.' }),
+  ];
+  const ctx = await setup({ responses, configOverrides: { recoveryBackoffMs: 100 } });
   try {
     const summary = await ctx.agent.run('write a very large file');
-    assert.equal(summary.status, 'truncated');
-    assert.notEqual(summary.status, 'completed');
-    assert.equal(summary.changedFiles.length, 0);
-    assert.equal(ctx.provider.calls.length, 4, 'the retry budget is bounded');
-    assert.ok(summary.issues.some((issue) => /output-token cap/i.test(issue)));
-    assert.match(summary.finalText, /stopped instead of being reported as complete/i);
+    assert.equal(summary.status, 'completed');
+    assert.equal(ctx.provider.calls.length, 5, 'there is no attempt cap on re-asking');
+    const retries = ctx.renderer.events.filter(
+      (event) => event.event === 'heartbeat' && event.payload.code === 'TRUNCATED_RESPONSE',
+    );
+    assert.equal(retries.length, 4, 'every cut-off response is visible as a heartbeat');
+    assert.ok(summary.issues.some((issue) => /cut off/i.test(issue)));
   } finally {
     await ctx.cleanup();
   }
@@ -900,6 +904,105 @@ test('compaction mid-task keeps the session prompt and the task valid', async ()
     assert.ok(
       ctx.provider.calls.every((call) => /OPERATING CONTRACT/.test(call.messages[0].content)),
       'the session prompt survives compaction on every request',
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('an answer that only announces the next action is re-asked instead of ending the task', async () => {
+  const ctx = await setup({
+    responses: [
+      response({
+        toolCalls: [
+          toolCall('edit_file', {
+            path: 'src/util.js',
+            old_text: 'export const add = (a, b) => a + b;',
+            new_text: 'export const add = (a, b) => b + a;',
+          }),
+        ],
+      }),
+      // The real-world failure: an edit lands, then the model narrates the
+      // verification it is about to run and stops.
+      response({ content: 'Edit applied. Let me verify the syntax and that the new operator is in place.' }),
+      response({ toolCalls: [toolCall('read_file', { path: 'src/util.js', start_line: 1, end_line: 1 })] }),
+      response({ content: 'Updated src/util.js line 1 and read it back: add() now returns b + a.' }),
+    ],
+  });
+  try {
+    const summary = await ctx.agent.run('flip the addition order');
+    assert.equal(summary.status, 'completed');
+    assert.deepEqual(summary.changedFiles, ['src/util.js']);
+    assert.equal(ctx.provider.calls.length, 4, 'the announcement is re-asked, then the work continues');
+
+    const nudges = ctx.provider.calls
+      .at(-1)
+      .messages.filter((message) => message.role === 'user')
+      .map((message) => String(message.content));
+    assert.ok(
+      nudges.some((text) => /announced an action but made no tool call/i.test(text) && /Call the tool/i.test(text)),
+      'the model is told that its announcement executed nothing',
+    );
+    const retries = ctx.renderer.events.filter(
+      (event) => event.event === 'heartbeat' && event.payload.code === 'UNFINISHED_ANSWER',
+    );
+    assert.equal(retries.length, 1, 'the re-ask is visible as a heartbeat');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('announcements keep being re-asked with no attempt cap until the work continues', async () => {
+  const ctx = await setup({
+    responses: [
+      response({ content: 'Let me read the listener file and add the presence call.' }),
+      response({ content: 'Now I will add the typing indicator to the listener.' }),
+      response({ content: 'Saya akan melanjutkan dengan menambahkan efek mengetik.' }),
+      response({ content: 'Langkah selanjutnya: verifikasi socket.js lalu ubah listener.js.' }),
+      response({ toolCalls: [toolCall('read_file', { path: 'src/util.js' })] }),
+      response({ content: 'Added the typing indicator to the listener and verified src/util.js parses.' }),
+    ],
+  });
+  try {
+    const summary = await ctx.agent.run('add a typing indicator');
+    assert.equal(summary.status, 'completed', 'four announcements do not end the task');
+    assert.equal(ctx.provider.calls.length, 6, 'there is no attempt cap on re-asking');
+    const retries = ctx.renderer.events.filter(
+      (event) => event.event === 'heartbeat' && event.payload.code === 'UNFINISHED_ANSWER',
+    );
+    assert.equal(retries.length, 4, 'every announcement is visible as a heartbeat');
+
+    const nudges = ctx.provider.calls
+      .at(-1)
+      .messages.filter((message) => message.role === 'user')
+      .map((message) => String(message.content))
+      .filter((text) => /announced an action|no tool call|only prose|Stop describing/i.test(text));
+    assert.ok(new Set(nudges).size >= 3, 'the wording rotates so the model is not told the same thing forever');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('a cancelled task is remembered as a runtime record, never as an answer to replay', async () => {
+  const ctx = await setup({ responses: [response({ content: 'ok' })] });
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    const cancelled = await ctx.agent.run('finish the listener work', { signal: controller.signal });
+    assert.equal(cancelled.status, 'cancelled');
+
+    const next = await ctx.agent.run('selesaikan');
+    assert.equal(next.status, 'completed');
+    const messages = ctx.provider.calls.at(-1).messages;
+    assert.ok(
+      !messages.some(
+        (message) => message.role === 'assistant' && /Task cancelled\. No further tool calls/.test(String(message.content || '')),
+      ),
+      'the cancelled run must not sit in memory as an assistant answer',
+    );
+    assert.ok(
+      messages.some((message) => message.role === 'assistant' && /runtime record, not an answer/.test(String(message.content || ''))),
+      'it is kept only as an internal record for the worklog',
     );
   } finally {
     await ctx.cleanup();

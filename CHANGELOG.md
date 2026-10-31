@@ -3,6 +3,38 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.4.3] - 2026-10-31
+
+### Diperbaiki
+
+- **Jawaban yang hanya mengumumkan langkah berikutnya tidak lagi menutup tugas
+  sebagai `completed`.** Gejalanya: edit terakhir berhasil, model menulis
+  "Edit applied. Let me verify the syntax…" tanpa satu pun tool call, lalu run
+  berhenti `◆ completed` padahal verifikasi yang dijanjikan tidak pernah jalan
+  dan tugasnya belum selesai. Kini jawaban yang kalimat penutupnya hanya
+  merencanakan aksi (`let me…`, `now I'll…`, `saya akan…`,
+  `langkah selanjutnya…`) dimasukkan ke riwayat dan model diminta mengirim tool
+  call-nya (heartbeat `UNFINISHED_ANSWER`, wording berputar, tidak memakan
+  langkah, dan **tanpa batas percobaan** — hanya `/cancel` atau tenggat tugas
+  yang menghentikannya, sama seperti giliran kosong). Kalimat yang
+  bertanya/menawarkan lanjutan ke pengguna ("let me know", "mau saya") tetap
+  dianggap jawaban akhir.
+- **Batas percobaan pada respons terpotong dihapus.** Status `truncated` tidak
+  lagi dipakai untuk mengakhiri tugas lebih awal: respons yang kena
+  `agent.maxOutputTokens` terus diminta ulang dengan panggilan lebih kecil
+  (backoff eksponensial tetap, wording berputar) sampai tugas benar-benar
+  selesai, dibatalkan, atau tenggat waktu habis. Tidak ada lagi tugas yang
+  berhenti sendiri karena jumlah percobaan recovery.
+- **Tugas yang berakhir tanpa jawaban tidak lagi disimpan sebagai jawaban
+  asisten.** Tugas `cancelled`/`failed`/`truncated` sebelumnya masuk memori
+  percakapan dengan teks `Task cancelled. No further tool calls were executed.`
+  sehingga tugas sesudahnya bisa memantulkannya kembali sebagai jawaban → run
+  `completed · 1 step · changed: none`. Kini hanya status `completed` dan
+  `step-limit` yang disimpan sebagai jawaban; sisanya menjadi catatan runtime
+  internal yang tidak boleh dikutip. Kontrak operasional prompt juga memuat
+  aturan baru: respons tanpa tool call mengakhiri tugas, jadi jangan pernah
+  menutup turn dengan mengumumkan aksi berikutnya.
+
 ## [0.4.2] - 2026-10-31
 
 ### Diperbaiki
