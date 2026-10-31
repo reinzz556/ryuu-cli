@@ -3,6 +3,23 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-10-31
+
+### Diperbaiki
+
+- **Respons terpotong di batas token output tidak lagi menyelesaikan tugas
+  palsu.** Sebelumnya respons dengan `finish_reason: "length"` yang tidak
+  membawa tool call utuh (panggilannya dibuang provider karena JSON-nya
+  terpotong) dianggap jawaban akhir, sehingga run berhenti dengan status
+  `completed` padahal model masih di tengah pekerjaan dan `changed: none` —
+  tugas selesai tanpa satu pun perubahan. Kini potongan itu tetap masuk
+  riwayat, model diberi nudge yang berputar (maksimum 3 kali, tampil sebagai
+  heartbeat `TRUNCATED_RESPONSE`) untuk mengirim panggilan yang lebih kecil,
+  dan bila tetap terpotong tugas dihentikan dengan status baru `truncated`
+  (exit code 1, baris merah `✕`) beserta issue yang menjelaskan penyebabnya.
+  Respons kosong karena terpotong ikut jalur ini, bukan lagi retry tak
+  berujung.
+
 ## [0.3.2] - 2026-10-30
 
 ### Ditambahkan

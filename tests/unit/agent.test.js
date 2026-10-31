@@ -770,6 +770,71 @@ test('a response cut off at the token cap is never executed as a write', async (
   }
 });
 
+test('a response cut off before its tool call never ends the task as completed', async () => {
+  const ctx = await setup({
+    responses: [
+      {
+        ...response({
+          content:
+            'The boot.node works perfectly. Now let me build the clean launcher.js. I will base it on the proven pattern and write the whole file in one go.',
+        }),
+        finishReason: 'length',
+      },
+      { ...response({ content: 'Still cut off while writing the tool call.' }), finishReason: 'length' },
+      response({ content: 'Wrote src/launcher.js with the smaller edit and verified it.' }),
+    ],
+  });
+  try {
+    const summary = await ctx.agent.run('build the launcher');
+    assert.equal(summary.status, 'completed');
+    assert.equal(ctx.provider.calls.length, 3, 'both truncated responses are re-asked');
+
+    // The model is told that nothing ran, and that the next call must be smaller.
+    // Every recorded request shares the live message array, so the assertions
+    // read the final conversation instead of a per-call snapshot.
+    const turns = ctx.provider.calls.at(-1).messages;
+    const userNudges = turns.filter((message) => message.role === 'user').map((message) => String(message.content));
+    assert.ok(
+      userNudges.some((text) => /cut off at the output-token limit/i.test(text) && /smaller tool call/i.test(text)),
+      'the first retry explains that nothing ran and asks for a smaller call',
+    );
+    assert.ok(userNudges.some((text) => /output-token cap/i.test(text)), 'the second retry is rotated wording');
+    // Its own partial answer stays in the history so it resumes instead of restarting.
+    assert.ok(
+      turns.some(
+        (message) => message.role === 'assistant' && /clean launcher\.js/.test(String(message.content || '')),
+      ),
+      'the cut-off text is kept in history',
+    );
+    const truncationRetries = ctx.renderer.events.filter(
+      (event) => event.event === 'heartbeat' && event.payload.code === 'TRUNCATED_RESPONSE',
+    );
+    assert.equal(truncationRetries.length, 2, 'each cut-off response is visible as a heartbeat');
+    assert.ok(summary.issues.some((issue) => /cut off/i.test(issue)));
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('repeated truncation stops the task as truncated instead of faking completion', async () => {
+  const responses = Array.from({ length: 4 }, (_, index) => ({
+    ...response({ content: `Answer attempt ${index} that never reaches a tool call.` }),
+    finishReason: 'length',
+  }));
+  const ctx = await setup({ responses });
+  try {
+    const summary = await ctx.agent.run('write a very large file');
+    assert.equal(summary.status, 'truncated');
+    assert.notEqual(summary.status, 'completed');
+    assert.equal(summary.changedFiles.length, 0);
+    assert.equal(ctx.provider.calls.length, 4, 'the retry budget is bounded');
+    assert.ok(summary.issues.some((issue) => /output-token cap/i.test(issue)));
+    assert.match(summary.finalText, /stopped instead of being reported as complete/i);
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('per-request telemetry reaches the renderer: first token, usage and latency', async () => {
   const ctx = await setup({
     responses: [

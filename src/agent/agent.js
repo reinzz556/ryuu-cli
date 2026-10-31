@@ -68,9 +68,35 @@ function emptyResponseNudge(attempt) {
     'The response was empty again. Reply with a tool call or the final answer — never an empty turn, and do not repeat work already done.',
     'Still empty. Do not re-analyze or re-read anything the worklog already covers: if the task is finished, write the result now; otherwise call the next tool.',
     'Empty response repeated. State the next concrete action and call the tool for it, or deliver the final answer below.',
+  ];    return nudges[Math.min(Math.max(0, attempt - 1), nudges.length - 1)];
+}
+
+/**
+ * How many cut-off responses are re-asked before the task is stopped.
+ *
+ * Unlike an empty response, a truncated one is not transient: the model is
+ * producing more than `maxOutputTokens` allows, so the retry has to be bounded
+ * or the loop would only end at the task deadline.
+ */
+const MAX_TRUNCATED_RESPONSES = 3;
+
+/**
+ * Wording that gets a response cut off at the output-token cap going again.
+ *
+ * The tool call it was writing came back unparseable, so the provider dropped
+ * it and nothing ran — the model has to be told that explicitly, or it assumes
+ * its work already happened. Rotated like the empty-response nudges.
+ */
+function truncatedResponseNudge(attempt) {
+  const nudges = [
+    'Your previous response was cut off at the output-token limit before its tool call finished, so NOTHING was executed. Continue the task from where you stopped: send one smaller tool call (narrower file range, shorter content, or split the change into several edits). Do not restart the analysis and do not re-read what you already read.',
+    'That response hit the output-token cap again, so the call was discarded and nothing ran. Skip the preamble and act in pieces: one small tool call per step instead of one large one.',
+    'Cut off at the token cap once more. No work was lost, but nothing after the cut was executed: issue a single minimal tool call now, or give the final answer without repeating what is already done.',
+    'The response keeps hitting the output-token limit. Emit the smallest possible next action immediately — one short tool call or the final answer, no explanation first.',
   ];
   return nudges[Math.min(Math.max(0, attempt - 1), nudges.length - 1)];
 }
+
 
 /**
  * Replace invalid `function.arguments` in a message history with valid JSON.
@@ -690,6 +716,7 @@ export class Agent {
     const failureCounts = new Map();
     try {
       let emptyResponses = 0;
+      let truncatedResponses = 0;
       let finished = false;
       for (let step = 1; step <= stepLimit; step += 1) {
         checkAbort();
@@ -797,6 +824,50 @@ export class Agent {
 
         if (calls.length === 0) {
           const content = (response.content || '').trim();
+
+          // A response cut off at the token cap is never a final answer: the
+          // model was still mid-task, and the tool call it was writing came
+          // back unparseable, so the provider dropped it. Accepting the
+          // leftover text as the answer reported the task as "completed" with
+          // nothing changed — the worst possible outcome for a long run.
+          if (truncated) {
+            truncatedResponses += 1;
+            if (truncatedResponses <= MAX_TRUNCATED_RESPONSES) {
+              if (response.content) messages.push({ role: 'assistant', content: response.content });
+              messages.push({ role: 'user', content: truncatedResponseNudge(truncatedResponses) });
+              const retryBase = Math.max(100, Number(this.config.recoveryBackoffMs ?? 500));
+              const delayMs = Math.min(15000, retryBase * 2 ** Math.min(truncatedResponses - 1, 5));
+              this.#emit('heartbeat', {
+                phase: 'retry',
+                step,
+                attempt: truncatedResponses,
+                maxAttempts: MAX_TRUNCATED_RESPONSES,
+                delayMs,
+                code: 'TRUNCATED_RESPONSE',
+                message: 'Cut off at the output-token cap — asking for a smaller call.',
+              });
+              this.logger?.warn('response truncated at the token cap; retrying', {
+                step,
+                attempt: truncatedResponses,
+                delayMs,
+              });
+              await abortableDelay(delayMs, signal);
+              // Repeating this turn must not eat the step budget either.
+              step -= 1;
+              continue;
+            }
+            // The retry budget is spent: stop honestly instead of claiming a
+            // completion that no tool result ever backed.
+            status = 'truncated';
+            finished = true;
+            finalText = `The response was cut off at the output-token limit ${MAX_TRUNCATED_RESPONSES} times in a row, so the task was stopped instead of being reported as complete. Nothing further was executed. Raise agent.maxOutputTokens (this run used ${this.config.maxOutputTokens}) or split the task into a smaller one, then continue.`;
+            session.issues.push(
+              `Stopped: the model hit the ${this.config.maxOutputTokens}-output-token cap before it could finish a tool call.`,
+            );
+            this.logger?.warn('task stopped after repeated truncation', { step, attempts: truncatedResponses });
+            break;
+          }
+
           if (!content) {
             emptyResponses += 1;
             // An empty answer is a retry, never a fatal fault: nudge the model,
@@ -828,6 +899,7 @@ export class Agent {
           break;
         }
         emptyResponses = 0;
+        truncatedResponses = 0;
         if (response.content) {
           // When the answer already streamed live, the text is already on screen.
           const streamed = typeof this.renderer?.streamedResponse === 'function' && this.renderer.streamedResponse();

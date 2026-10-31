@@ -782,7 +782,13 @@ berpura-pura sebaliknya.
   sudah diketahui.
 - `finish_reason: \"length\"` ditangani: pemanggilan tool yang terpotong pada
   batas token output dibuang dan dilaporkan, tidak pernah dieksekusi sebagai
-  file yang tertulis setengah jalan.
+  file yang tertulis setengah jalan. Respons yang terpotong **tanpa** tool call
+  yang utuh juga tidak pernah dianggap jawaban akhir: model diminta mengulang
+  dengan panggilan yang lebih kecil (maksimum 3 kali, terlihat sebagai
+  heartbeat `TRUNCATED_RESPONSE`), dan bila tetap terpotong tugas dihentikan
+  dengan status `truncated` — bukan `completed` yang palsu. Sisa teks yang
+  terpotong tetap masuk riwayat percakapan supaya model melanjutkan, bukan
+  mengulang analisis.
 - Pada 70% anggaran waktu, model diberi tahu untuk menyatu (konvergen), dan
   aliran respons yang tidak mengirim byte selama
   `agent.streamIdleTimeoutMs` dibatalkan dengan `STREAM_STALLED` alih-alih

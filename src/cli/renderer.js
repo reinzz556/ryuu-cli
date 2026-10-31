@@ -33,6 +33,7 @@ const STATUS_STYLE = {
   cancelled: { label: 'cancelled', color: 'yellow' },
   failed: { label: 'failed', color: 'red' },
   'step-limit': { label: 'step limit reached', color: 'yellow' },
+  truncated: { label: 'response truncated', color: 'red' },
 };
 
 const ERROR_HINTS = {
