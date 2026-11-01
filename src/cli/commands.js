@@ -29,6 +29,7 @@ import { formatDoctor, runDoctor } from '../services/doctor.js';
 import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { PROVIDER_INFO } from '../services/websearch/providers.js';
 import { runUserShell } from '../services/ushell.js';
+import { createDriveCommand } from '../../plugins/google-drive/command.js';
 import { RyuuError } from '../utils/errors.js';
 
 export function parseCommandLine(line) {
@@ -1115,6 +1116,24 @@ export function createCommands(state) {
       ].join('\n'),
     );
   });
+
+  // Optional plugins (plugins/): each contributes one namespaced command so the
+  // core parser stays untouched. `/drive` is only defined when the plugin loaded.
+  for (const plugin of state.plugins || []) {
+    const handler = createDriveCommand({
+      plugin,
+      registry,
+      confirm: (question) => state.confirmLocal(question),
+      openBrowser: true,
+      showCode: state.showCode || null,
+    });
+    define(
+      plugin.command || plugin.name,
+      `Google Drive integration: login | logout | account | enable | disable | status | config | test`,
+      '/drive [login|logout|account|enable|disable|status|config|test]',
+      async (args = '') => handler(args, print),
+    );
+  }
 
   define('config', 'Show effective configuration (secrets redacted)', '/config', async () => {
     const described = describeConfig(config);

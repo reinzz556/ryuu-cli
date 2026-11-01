@@ -1018,6 +1018,11 @@ export class Agent {
         for (const call of calls) {
           checkAbort();
           callIndex += 1;
+          // The plugin a tool belongs to, if any: the CLI paints plugin tools in
+          // their own colour. Resolved once here so every event of this call
+          // carries the same flag.
+          const callPlugin = typeof this.registry?.pluginFor === 'function' ? this.registry.pluginFor(call.name) : null;
+          const pluginName = callPlugin ? callPlugin.name : null;
           const duplicateKey = `${call.name}\u0000${call.argumentsText}`;
           if (seenInStep.has(duplicateKey)) {
             this.#toolReply(messages, call, { ok: false, error: { code: 'DUPLICATE_CALL', message: 'Duplicate tool call in the same step was ignored.' } }, session);
@@ -1100,6 +1105,7 @@ export class Agent {
                 ok: true,
                 durationMs: 0,
                 cached: true,
+                plugin: pluginName,
                 summary: `${args.path} already read and unchanged — not read again`,
               });
               this.#toolReply(
@@ -1147,7 +1153,7 @@ export class Agent {
               ok: false,
               error: { code: previewError.code || 'PREVIEW_FAILED', message: previewError.message },
             }, session);
-            this.#emit('toolEnd', { name: call.name, ok: false, durationMs: 0, summary: previewError.message });
+            this.#emit('toolEnd', { name: call.name, ok: false, durationMs: 0, plugin: pluginName, summary: previewError.message });
             continue;
           }
 
@@ -1177,12 +1183,15 @@ export class Agent {
             }
           }
 
+          // Plugin tools are flagged so the CLI can paint them differently from
+          // built-in tooling. It is metadata only: execution is unchanged.
           this.#emit('toolStart', {
             name: call.name,
             args,
             risk: tool.risk,
             index: callIndex,
             total: calls.length,
+            plugin: pluginName,
             detail: describeToolTarget(call.name, args),
           });
           const toolStarted = Date.now();
@@ -1210,6 +1219,7 @@ export class Agent {
               name: call.name,
               ok: true,
               durationMs,
+              plugin: pluginName,
               summary: summarizeToolResult(call.name, result),
             });
             // The command the user approved and what it actually printed: the
@@ -1235,7 +1245,7 @@ export class Agent {
             const durationMs = Date.now() - toolStarted;
             const message = toolError?.message || String(toolError);
             failureCounts.set(callKey, previousFailures + 1);
-            this.#emit('toolEnd', { name: call.name, ok: false, durationMs, summary: message });
+            this.#emit('toolEnd', { name: call.name, ok: false, durationMs, plugin: pluginName, summary: message });
             session.issues.push(`${call.name}: ${message.slice(0, 300)}`);
             this.#toolReply(messages, call, {
               ok: false,

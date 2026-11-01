@@ -311,6 +311,15 @@ export class Renderer {
     return this.c.hex(PALETTE[name] || PALETTE.white)(String(text));
   }
 
+  /**
+   * Tool name colour: built-ins stay flat blue, plugin tools are sky blue and
+   * bold so an installed integration is visible at a glance.
+   */
+  #toolName(name, plugin) {
+    const text = String(name ?? '');
+    return plugin ? this.c.bold(this.c.hex(PALETTE.sky)(text)) : this.c.hex(PALETTE.blue)(text);
+  }
+
   #visibleLength(text) {
     return displayWidth(text, { ansi: true });
   }
@@ -508,6 +517,29 @@ export class Renderer {
   /** Print pre-formatted text (used by slash commands). */
   lines(text = '') {
     for (const line of String(text).split('\n')) this.#write(line);
+  }
+
+  /**
+   * A framed monospace block with a `⧉ copy` chip — used by commands that must
+   * show something copyable, such as a login URL. It reuses the Markdown code
+   * block path, so the whole box is the clipboard hit target.
+   */
+  showCode({ label = '', text = '' } = {}) {
+    const body = String(text ?? '');
+    if (!body) return;
+    // A piped or plain run has no frame and no click target: print the value.
+    if (this.plain) {
+      this.lines(body);
+      return;
+    }
+    if (/(^|\n)\s*```/.test(body)) {
+      this.lines(body);
+      return;
+    }
+    const lang = String(label ?? '')
+      .replace(/[^A-Za-z0-9_+#.-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    this.#markdown('```' + `${lang}\n${body}\n` + '```');
   }
 
   banner({ version, model, provider, workspace, node, approvalPolicy, logFile }) {
@@ -1344,7 +1376,7 @@ export class Renderer {
     }
   }
 
-  toolStart({ name, args, index = 0, total = 0, detail = '' }) {
+  toolStart({ name, args, index = 0, total = 0, detail = '', plugin = null }) {
     if (this.reasoning.active) this.reasoningEnd({});
     if (this.answer.active) this.answerEnd();
     // Running a tool is exactly the `working` phase the user asked for.
@@ -1365,11 +1397,11 @@ export class Renderer {
       return;
     }
     this.#write(
-      `  ${this.c.dim('│')} ${this.#paint('violet', '◆')} ${this.c.bold(this.c.hex(PALETTE.blue)(name))} ${this.c.dim(this.#fit(argsPreview, this.#innerWidth() - 20))}`,
+      `  ${this.c.dim('│')} ${this.#paint('violet', '◆')} ${this.#toolName(name, plugin)} ${this.c.dim(this.#fit(argsPreview, this.#innerWidth() - 20))}`,
     );
   }
 
-  toolEnd({ name, ok, durationMs, summary, cached = false }) {
+  toolEnd({ name, ok, durationMs, summary, cached = false, plugin = null }) {
     this.status.tool = '';
     this.status.toolIndex = 0;
     this.status.toolTotal = 0;
@@ -1384,7 +1416,7 @@ export class Renderer {
         this.#write(this.c.dim(`  [cached] ${name} · ${detail}`));
         return;
       }
-      this.#write(`  ${this.c.dim('│')} ${this.#paint('cyan', '↺')} ${this.c.hex(PALETTE.blue)(name)} ${this.c.dim(`· ${detail}`)}`);
+      this.#write(`  ${this.c.dim('│')} ${this.#paint('cyan', '↺')} ${this.#toolName(name, plugin)} ${this.c.dim(`· ${detail}`)}`);
       return;
     }
     if (this.plain) {
@@ -1396,8 +1428,9 @@ export class Renderer {
     }
     const symbol = ok ? this.#paint('green', '✓') : this.#paint('red', '✕');
     const stats = [duration, detail].filter(Boolean).join(' · ');
+    const label = ok ? this.#toolName(name, plugin) : this.c.hex(PALETTE.red)(String(name ?? ''));
     this.#write(
-      `  ${this.c.dim('│')} ${symbol} ${this.c.hex(PALETTE.blue)(name)}${stats ? ` ${this.c.dim(`· ${stats}`)}` : ''}`,
+      `  ${this.c.dim('│')} ${symbol} ${label}${stats ? ` ${this.c.dim(`· ${stats}`)}` : ''}`,
     );
   }
 

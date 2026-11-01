@@ -511,3 +511,76 @@ test('every version comes from package.json', () => {
     tui.close();
   }
 });
+
+test('a command can print a copyable block: one closed frame, one click copies it', () => {
+  const { tui, writes } = tuiWithClipboard();
+  try {
+    const url =
+      'https://accounts.google.com/o/oauth2/v2/auth?client_id=example.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fexample.test%2Fadmin%2Ftools%2Fdrive-callback&state=STATE_SAMPLE_123';
+    tui.showCode({ label: 'url', text: url });
+    tui.forceRender();
+
+    const rows = layoutTranscript(tui.transcript, 69, { c, color: false }).map((row) => stripAnsi(row.text));
+    const frame = rows.filter((row) => /^\s*[╭│╰]/.test(row));
+    assert.ok(frame.length > 2, 'the block is drawn as a frame');
+    assert.equal(
+      new Set(frame.map((row) => displayWidth(row))).size,
+      1,
+      'every frame row is the same width, so the box is not ragged',
+    );
+    assert.ok(rows.some((row) => row.includes('╮')), 'the top rule closes with a corner');
+    assert.ok(rows.some((row) => row.includes('╯')), 'the bottom rule closes with a corner');
+    assert.equal(rows.filter((row) => row.includes('⧉ copy')).length, 1, 'one copy chip');
+
+    const index = tui.copyMap.findIndex(Boolean);
+    assert.ok(index >= 0, 'the whole block is a copy target');
+    tui.handleMouseReport(['', '0', '10', String(index + 2), 'M']);
+    const sequence = writes.find((chunk) => chunk.includes('\x1b]52;c;'));
+    assert.ok(sequence, 'the click writes an OSC 52 clipboard sequence');
+    assert.equal(copiedText(sequence), url, 'the exact url is copied, not the wrapped rows');
+    assert.match(tui.toast.text, /copied/);
+  } finally {
+    tui.close();
+  }
+});
+
+test('plugin tools are painted sky blue in bold, built-ins stay yellow', () => {
+  const tui = ui();
+  try {
+    tui.toolEnd({ name: 'read_file', ok: true, durationMs: 3, summary: 'a.js' });
+    tui.toolEnd({ name: 'drive_search', ok: true, durationMs: 9, summary: '3 files', plugin: 'google-drive' });
+    tui.forceRender();
+
+    const rows = layoutTranscript(tui.transcript, 70, { c: painted, color: true }).map((row) => row.text);
+    const builtin = rows.find((row) => row.includes('read_file'));
+    const plugin = rows.find((row) => row.includes('drive_search'));
+    assert.ok(builtin && plugin, 'both tools are on screen');
+
+    assert.ok(builtin.includes(YELLOW), 'a built-in tool name stays yellow');
+    assert.ok(!builtin.includes(SKY), 'a built-in tool name is not sky blue');
+    assert.ok(plugin.includes(SKY), 'a plugin tool name is sky blue');
+    assert.ok(!plugin.includes(YELLOW), 'a plugin tool name is not yellow');
+    const at = plugin.indexOf('drive_search');
+    assert.ok(
+      plugin.slice(Math.max(0, at - 40), at).includes('\x1b[1m'),
+      'the plugin tool name is bold as well as sky blue',
+    );
+  } finally {
+    tui.close();
+  }
+});
+
+test('a failed plugin tool is still painted red, never sky blue', () => {
+  const tui = ui();
+  try {
+    tui.toolEnd({ name: 'drive_upload', ok: false, durationMs: 4, summary: 'quota', plugin: 'google-drive' });
+    tui.forceRender();
+    const rows = layoutTranscript(tui.transcript, 70, { c: painted, color: true }).map((row) => row.text);
+    const failed = rows.find((row) => row.includes('drive_upload'));
+    assert.ok(failed, 'the failed tool is on screen');
+    assert.ok(failed.includes(RED), 'a failure stays red');
+    assert.ok(!failed.includes(SKY), 'a failure does not borrow the plugin colour');
+  } finally {
+    tui.close();
+  }
+});

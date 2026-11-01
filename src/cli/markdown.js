@@ -356,14 +356,18 @@ function renderCodeBlock(lines, lang, { width, c, color, accent = null, copy = t
   // narrow to read as a button instead of eating the whole rule.
   const chip = copy ? ' ⧉ copy ' : '';
   const showChip = Boolean(chip) && width - 2 - visibleLength(label) - visibleLength(chip) >= 4;
-  const rule = Math.max(1, width - 2 - visibleLength(label) - (showChip ? visibleLength(chip) : 0));
+  // The top rule must end in a corner and keep the same visible width as the
+  // bottom one, or the frame looks ragged in a fixed-width terminal.
+  const rule = Math.max(1, width - 3 - visibleLength(label) - (showChip ? visibleLength(chip) : 0));
   const paint = toAccent(accent, c);
   const chipPaint = showChip ? c.bgHex('#1e293b')(c.hex(SLATE)(chip)) : '';
   const output = [
-    `${paint('╭─')}${c.bold(label)}${c.dim('─'.repeat(rule))}${chipPaint}`,
+    `${paint('╭─')}${c.bold(label)}${c.dim('─'.repeat(rule))}${chipPaint}${paint('╮')}`,
   ];
   const body = lines.length > 0 ? lines : [''];
-  const codeWidth = Math.max(8, width - 2);
+  // Every body row is padded and closed with a right edge, so the frame is a
+  // real box instead of three ragged vertical bars.
+  const codeWidth = Math.max(8, width - 3);
   for (const line of body) {
     const chunks = [];
     for (let index = 0; index < line.length; index += codeWidth) {
@@ -371,10 +375,11 @@ function renderCodeBlock(lines, lang, { width, c, color, accent = null, copy = t
     }
     if (chunks.length === 0) chunks.push('');
     for (const chunk of chunks) {
-      output.push(`${paint('│')} ${highlightCode(chunk, lang, c, color)}`);
+      const pad = ' '.repeat(Math.max(0, width - 3 - visibleLength(chunk)));
+      output.push(`${paint('│')} ${highlightCode(chunk, lang, c, color)}${pad}${paint('│')}`);
     }
   }
-  output.push(paint(`╰${'─'.repeat(Math.max(1, width - 2))}`));
+  output.push(paint(`╰${'─'.repeat(Math.max(1, width - 2))}╯`));
   return output;
 }
 

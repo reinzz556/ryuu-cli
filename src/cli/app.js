@@ -7,6 +7,7 @@ import { UndoManager } from '../services/undo.js';
 import { createLogger } from '../services/logger.js';
 import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
+import { loadPlugins, syncPluginTools } from '../../plugins/index.js';
 import { createActiveProvider, selectionFor } from '../providers/index.js';
 import { buildProviders, parseExtraProviders, PROVIDER_REQUEST_FIELDS } from '../providers/catalog.js';
 import { buildRawConfig } from '../config/load.js';
@@ -110,6 +111,16 @@ export async function createApp({
   const provider = injectedProvider || createActiveProvider(config, { logger });
   if (!provider.config) provider.config = config;
   provider.processes = processes;
+  // Optional integrations live in plugins/ and attach their tools to the same
+  // registry. A plugin whose state forbids it (disabled / not logged in) leaves
+  // the registry untouched, so the model is never offered a tool that cannot run.
+  const plugins = loadPlugins({ logger, workspace, config });
+  for (const plugin of plugins) {
+    plugin.registry = registry;
+    await syncPluginTools(plugin, registry).catch((error) => {
+      logger.warn('plugin tools not registered', { plugin: plugin.name, error: error.message });
+    });
+  }
   const projectCache = new ProjectSummaryCache({ file: path.join(config.cacheDir, 'project-summary.json') });
 
   let prompts = null;
@@ -330,6 +341,9 @@ export async function createApp({
     provider,
     approvals,
     webSearch: registry.webSearchManager || injectedWebManager || null,
+    plugins,
+    getPlugin: (name) => plugins.find((plugin) => plugin.name === name) || null,
+    syncPluginTools: (plugin) => syncPluginTools(plugin, registry),
     interactive,
     getAgent: () => agent,
     getLastSummary: () => lastSummary,
@@ -343,6 +357,7 @@ export async function createApp({
       return true;
     },
     confirmLocal,
+    showCode: typeof renderer.showCode === 'function' ? (block) => renderer.showCode(block) : null,
   };
 
   const commands = createCommands(state);
@@ -451,6 +466,7 @@ export async function createApp({
     undo,
     approvals,
     webSearch: registry.webSearchManager || injectedWebManager || null,
+    plugins,
     renderer,
     logger,
     commands,

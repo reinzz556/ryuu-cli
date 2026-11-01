@@ -1008,3 +1008,54 @@ test('a cancelled task is remembered as a runtime record, never as an answer to 
     await ctx.cleanup();
   }
 });
+
+test('tool events carry the plugin name so the CLI can colour plugin tools', async () => {
+  const ctx = await setup({
+    responses: [
+      response({ toolCalls: [toolCall('demo_echo', { text: 'hi' })] }),
+      response({ content: 'done' }),
+    ],
+  });
+  ctx.registry.registerPlugin({
+    name: 'demo',
+    version: '1.2.3',
+    tools: [
+      {
+        name: 'demo_echo',
+        description: 'Echo text back from a plugin.',
+        risk: 'read',
+        schema: { type: 'object', properties: { text: { type: 'string' } }, additionalProperties: false },
+        handler: async (args) => ({ echoed: args.text }),
+      },
+    ],
+  });
+  try {
+    const summary = await ctx.agent.run('use the plugin');
+    assert.equal(summary.status, 'completed');
+
+    const starts = ctx.renderer.events.filter((event) => event.event === 'toolStart');
+    const ends = ctx.renderer.events.filter((event) => event.event === 'toolEnd');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].payload.plugin, 'demo', 'toolStart names the owning plugin');
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0].payload.plugin, 'demo', 'toolEnd names the owning plugin too');
+
+    const builtIn = await (async () => {
+      const second = await setup({
+        responses: [
+          response({ toolCalls: [toolCall('read_file', { path: 'src/app.js' })] }),
+          response({ content: 'done' }),
+        ],
+      });
+      try {
+        await second.agent.run('read it');
+        return second.renderer.events.find((event) => event.event === 'toolStart').payload.plugin;
+      } finally {
+        await second.cleanup();
+      }
+    })();
+    assert.equal(builtIn, null, 'a built-in tool carries no plugin');
+  } finally {
+    await ctx.cleanup();
+  }
+});

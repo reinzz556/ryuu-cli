@@ -91,3 +91,29 @@ test('plugins validate and detect collisions', () => {
   );
   assert.throws(() => registry.registerPlugin({ name: 'bad name', tools: [] }), /Invalid plugin name/);
 });
+
+test('pluginFor tells the CLI which tools arrived from a plugin', () => {
+  const registry = new ToolRegistry();
+  registry.register(echoTool);
+  registry.registerPlugin({
+    name: 'demo',
+    version: '1.0.0',
+    tools: [
+      {
+        name: 'plugin_echo',
+        description: 'A plugin tool that echoes input.',
+        risk: 'read',
+        schema: { type: 'object', properties: {}, additionalProperties: false },
+        handler: async () => ({ ok: true }),
+      },
+    ],
+  });
+
+  assert.deepEqual(registry.pluginFor('plugin_echo'), {
+    name: 'demo',
+    version: '1.0.0',
+    toolNames: ['plugin_echo'],
+  });
+  assert.equal(registry.pluginFor('echo_tool'), null, 'a built-in tool belongs to no plugin');
+  assert.equal(registry.pluginFor('never_registered'), null, 'an unknown tool belongs to no plugin');
+});

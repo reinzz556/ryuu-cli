@@ -829,3 +829,26 @@ test('command output streams into the live region while the command runs', async
   assert.equal(renderer.status.output.length, 2, 'the tail is bounded to two rows');
   renderer.stopActivity();
 });
+
+test('a plugin tool name is sky blue in bold in the line renderer, built-ins stay blue', () => {
+  const stdout = capture({ isTTY: true, columns: 92 });
+  // Pin truecolor so the assertion compares the real RGB codes.
+  stdout.getColorDepth = () => 24;
+  const renderer = new Renderer({ stdout, stderr: stdout, plain: false, color: true });
+
+  renderer.toolStart({ name: 'read_file', args: { path: 'a.js' } });
+  renderer.toolEnd({ name: 'read_file', ok: true, durationMs: 4, summary: 'a.js' });
+  renderer.toolStart({ name: 'drive_search', args: { query: 'x' }, plugin: 'google-drive' });
+  renderer.toolEnd({ name: 'drive_search', ok: true, durationMs: 9, summary: '2 files', plugin: 'google-drive' });
+
+  const data = stdout.getData();
+  const sky = '\x1b[38;2;56;189;248m';
+  const blue = '\x1b[38;2;96;165;250m';
+  const lines = data.split('\n');
+  const pluginLine = lines.find((line) => line.includes('✓') && line.includes('drive_search'));
+  const builtInLine = lines.find((line) => line.includes('✓') && line.includes('read_file'));
+  assert.ok(pluginLine && builtInLine, 'both tool lines are printed');
+  assert.ok(pluginLine.includes(sky), 'the plugin tool name is sky blue');
+  assert.ok(pluginLine.includes('\x1b[1m'), 'and bold');
+  assert.ok(builtInLine.includes(blue), 'a built-in tool name keeps the flat blue');
+});

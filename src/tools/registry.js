@@ -76,6 +76,19 @@ export class ToolRegistry {
     return tool;
   }
 
+  /**
+   * The plugin a tool belongs to, or null for a built-in tool.
+   *
+   * The CLI uses this to give plugin tools their own colour, so an integration
+   * the user installed never looks like core tooling.
+   */
+  pluginFor(name) {
+    for (const plugin of this.plugins.values()) {
+      if (plugin.toolNames.includes(name)) return plugin;
+    }
+    return null;
+  }
+
   has(name) {
     return this.tools.has(name);
   }

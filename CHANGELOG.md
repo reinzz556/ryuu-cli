@@ -3,6 +3,76 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-01
+
+Rilis ini menambahkan sistem plugin dan integrasi Google Drive, sekaligus
+memindahkan seluruh kewenangan OAuth ke proyek API eksternal: CLI tidak lagi
+menyimpan client id maupun client secret Google.
+
+### Ditambahkan
+
+- **Sistem plugin.** Integrasi opsional kini hidup di `plugins/`, terpisah dari
+  `src/services/`, dan didaftarkan lewat `loadPlugins`/`syncPluginTools`.
+  Plugin hanya boleh menambah tool, command, dan konfigurasi sendiri; tool-nya
+  masuk registry yang sama sehingga approval, undo, dan audit tetap berlaku.
+- **Integrasi Google Drive (`plugins/google-drive/`)** dengan 16 tool:
+  `drive_search`, `drive_list`, `drive_get_metadata`, `drive_download`,
+  `drive_upload`, `drive_create_folder`, `drive_move`, `drive_rename`,
+  `drive_copy`, `drive_delete`, `drive_backup`, `drive_restore`,
+  `drive_list_backups`, `drive_delete_backup`, `drive_storage_info`,
+  `drive_get_account`.
+- **Command `/drive`**: `login`, `logout`, `account`, `enable`, `disable`,
+  `status`, `config [show]`, `config set <key> <value>`, `test`, `tools`.
+- **Backup & restore proyek ke Drive** berbasis ZIP (writer/reader sendiri,
+  tanpa dependensi tambahan), dengan aturan exclusion dan hard-exclude untuk
+  berkas rahasia (`.env`, kunci privat, `node_modules`).
+- **OAuth Web Application lewat backend API.** CLI meminta URL otorisasi ke
+  backend, membuka browser, lalu menerima hasil login tanpa pernah melihat
+  client id/secret. PKCE S256 dan penukaran `code` → token seluruhnya di server.
+- **Kunci login khusus Drive** (header `x-ryuu-drive-auth`) yang tertanam,
+  terpisah dari root key admin, hanya aktif selama siklus login, dan tidak bisa
+  diubah lewat command, config, atau environment variable.
+- **Tool plugin tampil beda di terminal**: nama tool dari plugin diberi warna
+  biru langit `#38bdf8` + bold di `--tui` maupun mode baris, sementara tool
+  bawaan tetap kuning (TUI) / biru datar (baris). Kegagalan tetap merah bold.
+- **Blok kode dengan tombol copy** (`╭─ label ─… ⧉ copy ╮`) dipakai untuk URL
+  login Drive dan jawaban model yang mengandung blok kode. Satu blok = satu
+  bingkai utuh; klik barisnya menyalin teks asli (bukan potongan hasil wrap).
+- **Dokumentasi** `docs/drive.md`: arsitektur plugin, alur OAuth, penyimpanan
+  credential terenkripsi AES-256-GCM, format backup, dan batasan scope
+  `drive.file`.
+
+### Diubah
+
+- **Nama tool plugin** ikut membawa asal-usulnya (`plugin`) pada event
+  `toolStart`/`toolEnd`, sehingga renderer bisa membedakan tool bawaan dan tool
+  plugin tanpa lookup tambahan.
+- **Bingkai blok kode dirapikan**: baris isi dipad dan ditutup `│`, pojok
+  kanan `╮`/`╯` dilengkapi, dan lebar dibagi rata agar tidak "bergerigi".
+- **Satu perintah = satu blok transcript**: baris berurutan digabung sehingga
+  tidak ada garis pemisah di tengah output `/drive login`, dan notifikasi
+  sukses tidak lagi tercerai-berai.
+- **`package.json`**: `plugins/` dan `docs/` ikut dipublikasikan; dependensi
+  baru `googleapis`.
+
+### Keamanan
+
+- Client id/secret Google **tidak ada** di CLI: validasi menolak key
+  `clientId`, `clientSecret`, `scopes`, `oauthBackend`, `oauthCliPath`,
+  `rootKey`, `driveKey`, dan `secret`, dan normalizer membuang key asing
+  sehingga config tulisan tangan pun tidak bisa menyelipkan kredensial.
+- Root key admin tidak pernah dikirim atau disimpan oleh plugin Drive;
+  refresh/revoke hanya memakai `grantId` sekali-terbit.
+- Credential Drive disimpan terenkripsi (AES-256-GCM) dengan kunci terpisah
+  (`RYUU_DRIVE_KEY` dapat menggantikannya untuk secret manager).
+- Jalur ekstraksi ZIP membatasi total ukuran (8 GB) dan menolak path traversal
+  serta symlink.
+
+### Diperbaiki
+
+- Blok kode tanpa pojok kanan dan garis batas berantakan pada mode `--tui`.
+- Notifikasi login Drive yang terpecah oleh rule gradien antarbaris.
+
 ## [0.4.3] - 2026-10-31
 
 ### Diperbaiki

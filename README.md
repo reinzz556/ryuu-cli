@@ -815,6 +815,32 @@ berpura-pura sebaliknya.
   `agent.streamIdleTimeoutMs` dibatalkan dengan `STREAM_STALLED` alih-alih
   menahan langkah tetap terbuka.
 
+## Plugin: Google Drive
+
+Integrasi opsional yang tinggal di `agents/ryuu/plugins/` (bukan di `src/services/`) dan
+mendaftarkan toolnya ke registry yang sudah ada hanya ketika aktif **dan** sudah login.
+
+```bash
+/drive login     # OAuth Web Application via API backend (CLI tanpa client id/secret)
+/drive enable    # daftarkan 16 tool Drive untuk AI Agent
+/drive status    # status integrasi, akun, scope, kuota
+/drive test      # diagnostik konfigurasi + credential + API
+```
+
+Tool yang tersedia setelah aktif: `drive_search`, `drive_list`, `drive_get_metadata`,
+`drive_download`, `drive_upload`, `drive_create_folder`, `drive_move`, `drive_rename`,
+`drive_copy`, `drive_delete`, `drive_backup`, `drive_restore`, `drive_list_backups`,
+`drive_delete_backup`, `drive_storage_info`, `drive_get_account`.
+
+Client ID dan Client Secret Google **tidak ada di CLI**: keduanya hanya tersimpan di
+proyek API (`website/api/lib/config.js`) yang melayani login lewat
+`/admin/tools/drive-cli`. CLI memakai kunci khusus login Drive yang tertanam di
+`plugins/google-drive/secret.js` (header `x-ryuu-drive-auth`, tidak dapat diubah dan
+tidak pernah ditampilkan); root key admin tidak dipakai dan tidak dikirim ke CLI.
+
+Endpoint backend dan redirect URI bersifat hardcode dan tidak bisa diubah lewat
+command apa pun. Dokumentasi lengkap: **[docs/drive.md](docs/drive.md)**.
+
 ## Model persetujuan dan izin
 
 Kebijakannya diatur dengan `agent.approvalPolicy`:

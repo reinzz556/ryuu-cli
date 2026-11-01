@@ -31,7 +31,8 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 /**
  * One colour per kind of line, so a glance tells blocks apart:
  * prose white, Markdown accents and tables sky blue, tool names yellow,
- * reasoning green, failures red. This palette is the only place colours live.
+ * plugin tool names sky blue in bold, reasoning green, failures red.
+ * This palette is the only place colours live.
  */
 const PALETTE = {
   white: '#e2e8f0',
@@ -556,6 +557,35 @@ function buildRows(item, width, { c, color }) {
     return rows;
   }
 
+  if (item.kind === 'code') {
+    // A framed monospace block with a `⧉ copy` chip. The whole box is the click
+    // target, so a long URL is copied in one click instead of a text selection.
+    const body = String(item.text ?? '');
+    const label = String(item.label ?? '');
+    if (/(^|\n)\s*```/.test(body)) {
+      // A body that itself carries a fence cannot be framed safely: print it plain.
+      for (const line of wrapAnsi(body, inner)) rows.push(line ? ` ${line}` : '');
+      return rows;
+    }
+    const lang = label.replace(/[^A-Za-z0-9_+#.-]+/g, '-').replace(/^-+|-+$/g, '');
+    const copies = new Map();
+    const offset = rows.length;
+    const lines = renderMarkdown('```' + `${lang}\n${body}\n` + '```', {
+      width: Math.max(20, width - 2),
+      c,
+      color,
+      base: (text) => paint('white', text),
+      accent: (text) => paint('sky', text),
+      onCodeBlock: ({ start, end, code }) => {
+        const target = { lang: label, code: String(code ?? '').slice(0, MAX_CODE_COPY_CHARS) };
+        for (let row = start; row <= end; row += 1) copies.set(offset + row, target);
+      },
+    });
+    for (const line of lines) rows.push(line ? ` ${line}` : '');
+    if (copies.size > 0) rows.copies = copies;
+    return rows;
+  }
+
   if (item.kind === 'answer') {
     // Every block carries a small label, like reasoning does, so white response
     // text is never mistaken for the tail of a tool or a notice.
@@ -564,6 +594,9 @@ function buildRows(item, width, { c, color }) {
     // Every rendered row of a fenced code block is remembered so a click on its
     // `⧉ copy` chip (or anywhere in the block) copies exactly that code.
     const copies = new Map();
+    // Code-block row numbers are relative to this item's own rows, not to the
+    // transcript, so the click map keeps working after scrolling.
+    const base = rows.length;
     const lines = renderMarkdown(item.text || '', {
       width: Math.max(20, width - 2),
       c,
@@ -572,7 +605,7 @@ function buildRows(item, width, { c, color }) {
       accent: (text) => paint('sky', text),
       onCodeBlock: ({ lang, code, start, end }) => {
         const target = { lang, code: String(code ?? '').slice(0, MAX_CODE_COPY_CHARS) };
-        for (let row = start; row <= end; row += 1) copies.set(row, target);
+        for (let row = start; row <= end; row += 1) copies.set(base + row, target);
       },
     });
     for (const line of lines) rows.push(line ? ` ${line}` : '');
@@ -583,7 +616,13 @@ function buildRows(item, width, { c, color }) {
   if (item.kind === 'tool') {
     const failed = item.ok === false;
     const mark = failed ? paint('red', '✕') : paint('green', '✓');
-    const name = failed ? c.bold(paint('red', item.name)) : paint('yellow', item.name);
+    // Plugin tools wear their own colour — sky blue and bold — so an installed
+    // integration never looks like built-in tooling. A failure is still red.
+    const name = failed
+      ? c.bold(paint('red', item.name))
+      : item.plugin
+        ? c.bold(paint('sky', item.name))
+        : paint('yellow', item.name);
     if (failed) {
       pushHeader(`${mark} ${name}${item.durationMs ? ` ${dim(`· ${formatSeconds(item.durationMs)}`)}` : ''}`);
       pushWrapped(item.summary || 'tool failed', '   ', 'redSoft', { dimmed: true });
@@ -730,7 +769,7 @@ export class Tui {
       step: null,
       maxSteps: null,
       tool: '',
-      promptTokens: 0,
+      toolPlugin: null,
       completionTokens: 0,
       frame: 0,
       output: '',
@@ -891,7 +930,29 @@ export class Tui {
   }
 
   lines(text = '') {
-    this.transcript.message(text);
+    // One command usually prints many lines. They belong to a single block: a
+    // rule between every line is what made command output look ragged.
+    const value = String(text ?? '');
+    const items = this.transcript.items;
+    const last = items[items.length - 1];
+    if (last && last.kind === 'info' && last.fromLines) {
+      last.text = `${last.text}\n${value}`;
+      last.version += 1;
+    } else {
+      const item = this.transcript.message(value);
+      item.fromLines = true;
+    }
+    this.requestRender();
+  }
+
+  /**
+   * A monospace block with a `⧉ copy` chip (renderMarkdown draws the frame).
+   * The whole block is a click target, like a code block in an answer.
+   */
+  showCode({ label = '', text = '' } = {}) {
+    const body = String(text ?? '');
+    if (!body) return;
+    this.transcript.add({ kind: 'code', label: String(label ?? ''), text: body, version: 0 });
     this.requestRender();
   }
 
@@ -1067,14 +1128,17 @@ export class Tui {
     this.requestRender();
   }
 
-  toolStart({ name = '', detail = '' } = {}) {
+  toolStart({ name = '', detail = '', plugin = null } = {}) {
     this.status.tool = name;
+    // Plugin tools keep their own colour in the status bar too.
+    this.status.toolPlugin = plugin || null;
     this.requestRender();
   }
 
-  toolEnd({ name = '', ok = true, durationMs = 0, summary = '' } = {}) {
+  toolEnd({ name = '', ok = true, durationMs = 0, summary = '', plugin = null } = {}) {
     this.status.tool = '';
-    this.transcript.add({ kind: 'tool', name, ok, durationMs, summary, version: 0 });
+    this.status.toolPlugin = null;
+    this.transcript.add({ kind: 'tool', name, ok, durationMs, summary, plugin: plugin || null, version: 0 });
     this.requestRender();
   }
 
@@ -1433,7 +1497,14 @@ export class Tui {
         this.paint('blue', `step ${this.status.step}${this.status.maxSteps ? `/${this.status.maxSteps}` : ''}`),
       );
     }
-    if (this.status.tool) parts.push(this.paint('yellow', this.status.tool));
+    if (this.status.tool) {
+      // Plugin tools are sky blue and bold here too, matching the transcript.
+      parts.push(
+        this.status.toolPlugin
+          ? this.c.bold(this.paint('sky', this.status.tool))
+          : this.paint('yellow', this.status.tool),
+      );
+    }
     if (this.toast && Date.now() <= this.toast.until) parts.push(this.paint('green', this.toast.text));
     if (this.status.promptTokens || this.status.completionTokens) {
       parts.push(
