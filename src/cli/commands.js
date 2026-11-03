@@ -30,6 +30,7 @@ import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { PROVIDER_INFO } from '../services/websearch/providers.js';
 import { runUserShell } from '../services/ushell.js';
 import { createDriveCommand } from '../../plugins/google-drive/command.js';
+import { createGitHubCommand } from '../../plugins/github/command.js';
 import { RyuuError } from '../utils/errors.js';
 
 export function parseCommandLine(line) {
@@ -1120,6 +1121,30 @@ export function createCommands(state) {
   // Optional plugins (plugins/): each contributes one namespaced command so the
   // core parser stays untouched. `/drive` is only defined when the plugin loaded.
   for (const plugin of state.plugins || []) {
+    if (plugin.name === 'github') {
+      const handler = createGitHubCommand({
+        plugin,
+        registry,
+        confirm: (question) => state.confirmLocal(question),
+        openBrowser: true,
+        showCode: state.showCode || null,
+      });
+      define(
+        'github',
+        'GitHub integration: login | logout | status | account | test | enable | disable | config',
+        '/github [login [--device]|logout|status|account|test|enable|disable|config]',
+        async (args = '') => handler(args, print),
+        [
+          '  Autentikasi memakai GitHub App lewat backend Ryuu, bukan token di CLI.',
+          '  login          membuka browser lalu menunggu persetujuan',
+          '  login --device device flow untuk mesin headless',
+          '  enable         mendaftarkan tool GitHub untuk AI Agent',
+          '  disable        melepas tool tanpa menghapus akun/token',
+        ].join('\n'),
+      );
+      continue;
+    }
+    if (plugin.name !== 'google-drive') continue;
     const handler = createDriveCommand({
       plugin,
       registry,

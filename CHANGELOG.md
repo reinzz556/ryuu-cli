@@ -3,6 +3,36 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-03
+
+Rilis ini menambahkan integrasi GitHub App sebagai plugin opsional, dengan
+seluruh kewenangan OAuth dan penyimpanan token berada di backend.
+
+### Ditambahkan
+
+- **Integrasi GitHub (`plugins/github/`)** dengan 35 tool AI: akun, repository,
+  branch/commit/file, issue, pull request, release, dan GitHub Actions.
+- **Command `/github`**: `login` (browser), `login --device` (headless),
+  `logout`, `status`, `account`, `test`, `enable`, `disable`, `config`.
+- **Gateway backend GitHub** (`website/api/lib/github/`) sebagai satu-satunya
+  pemegang Client Secret, Private Key, Webhook Secret, dan token pengguna.
+  CLI hanya memegang `cliToken` per akun yang disimpan terenkripsi
+  (AES-256-GCM) dan tidak pernah menerima access/refresh token GitHub.
+- **OAuth GitHub App** dengan `state` sekali pakai, PKCE S256, sesi pairing
+  berumur pendek, polling sekali ambil, serta fallback device flow.
+- **Auto-refresh token** di backend dengan single-flight dan rotasi refresh
+  token; `invalid_grant` menandai akun perlu login ulang.
+- **Webhook `/webhooks/github`** dengan verifikasi HMAC SHA-256 constant-time,
+  deduplikasi delivery, dan pemrosesan asynchronous.
+- **Approval** untuk seluruh operasi yang mengubah data; penghapusan file dan
+  merge pull request berisiko `destructive` dan dapat diblokir lewat
+  `confirmDestructive`.
+
+### Catatan
+
+- Plugin Google Drive tidak diubah perilakunya.
+- Tidak ada Client Secret, Private Key, atau token GitHub di source code CLI.
+
 ## [0.5.0] - 2026-11-01
 
 Rilis ini menambahkan sistem plugin dan integrasi Google Drive, sekaligus

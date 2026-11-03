@@ -1,4 +1,5 @@
 import { createGoogleDrivePlugin, googleDrivePluginDescriptor } from './google-drive/index.js';
+import { createGitHubPlugin, githubPluginDescriptor } from './github/index.js';
 
 /**
  * Plugin host for Ryuu CLI.
@@ -12,6 +13,7 @@ import { createGoogleDrivePlugin, googleDrivePluginDescriptor } from './google-d
 
 const FACTORIES = [
   { descriptor: googleDrivePluginDescriptor, create: (options) => createGoogleDrivePlugin(options) },
+  { descriptor: githubPluginDescriptor, create: (options) => createGitHubPlugin(options) },
 ];
 
 /** Instantiate every known plugin. Failures are reported, not fatal. */
@@ -53,4 +55,4 @@ export function unregisterPluginTools(plugin, registry) {
   return names.length;
 }
 
-export { googleDrivePluginDescriptor };
+export { googleDrivePluginDescriptor, githubPluginDescriptor };
