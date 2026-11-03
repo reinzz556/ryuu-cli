@@ -1,4 +1,5 @@
 import { defineTool } from '../../src/tools/registry.js';
+import { ValidationError } from '../../src/utils/errors.js';
 import {
   assertDestructiveAllowed,
   contentPath,
@@ -126,6 +127,43 @@ export function createRepoTools(plugin) {
         if (Object.keys(body).length === 0) throw new Error('Tidak ada perubahan yang diminta.');
         const repo = await api.patch(repoBase(args), body);
         return { ok: true, repository: pickRepo(repo) };
+      },
+    }),
+
+    defineTool({
+      name: 'github_delete_repository',
+      description:
+        'Hapus repository secara permanen. Membutuhkan permission Administration write dan hak admin pada repository. Argumen confirm wajib berisi "owner/repo" persis sama; tanpa itu tool menolak. Operasi ini destruktif: selalu meminta approval Ryuu dan diblokir saat confirmDestructive=false. Jangan pernah dipanggil tanpa persetujuan eksplisit pengguna.',
+      risk: 'destructive',
+      requiresApproval: true,
+      schema: {
+        type: 'object',
+        properties: {
+          ...REPO_PROPS,
+          confirm: {
+            type: 'string',
+            description: 'Tulis ulang "owner/repo" dari repository yang dihapus sebagai konfirmasi eksplisit.',
+          },
+        },
+        required: ['owner', 'repo', 'confirm'],
+      },
+      async handler(args) {
+        await assertDestructiveAllowed(plugin, 'Penghapusan repository');
+        const base = repoBase(args);
+        const target = base.replace(/^\/repos\//, '');
+        const typed = String(args.confirm ?? '').trim();
+        if (typed.toLowerCase() !== target.toLowerCase()) {
+          throw new ValidationError(
+            `Konfirmasi tidak cocok. Untuk menghapus repository ini, argumen confirm harus berisi "${target}".`,
+          );
+        }
+        const api = await plugin.requireClient();
+        await api.delete(base);
+        return {
+          ok: true,
+          deleted: target,
+          note: 'Repository dihapus permanen. Tindakan ini tidak dapat dibatalkan.',
+        };
       },
     }),
 

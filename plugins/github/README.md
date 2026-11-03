@@ -35,7 +35,7 @@ CLI menyimpan cliToken terenkripsi, lalu semua tools lewat backend.
 | `auth.js` | Membuka browser + pesan kegagalan login |
 | `backend.js` | HTTP client ke backend (connect, session, status, proxy) |
 | `api.js` | Klien GitHub REST melalui gateway + pagination |
-| `tools*.js` | 35 tool AI, dikelompokkan per domain |
+| `tools*.js` | 36 tool AI, dikelompokkan per domain |
 | `tool-helpers.js` | Validasi owner/repo/ref/path + pembatasan output |
 | `errors.js` | Error plugin + kode yang stabil |
 | `command.js` | Handler `/github` |
@@ -85,12 +85,13 @@ dapat diubah dari CLI dan tidak pernah ditulis ke file konfigurasi.
 menampilkan Client Secret, Private Key, Webhook Secret, access token, refresh
 token, atau `cliToken`.
 
-## Tool yang tersedia (35)
+## Tool yang tersedia (36)
 
 **Akun (3)** — `github_get_me`, `github_get_user`, `github_get_rate_limit`
 
-**Repository (12)** — `github_list_repositories`, `github_get_repository`,
-`github_create_repository`, `github_update_repository`, `github_list_branches`,
+**Repository (13)** — `github_list_repositories`, `github_get_repository`,
+`github_create_repository`, `github_update_repository`,
+`github_delete_repository`, `github_list_branches`,
 `github_get_branch`, `github_list_commits`, `github_get_commit`,
 `github_get_file_contents`, `github_create_or_update_file`,
 `github_delete_file`, `github_compare_commits`
@@ -111,15 +112,21 @@ token, atau `cliToken`.
 `github_list_workflow_runs`, `github_get_workflow_run`,
 `github_rerun_workflow`
 
-Tidak ada tool penghapusan repository. Penghapusan file dan merge pull request
-berisiko `destructive` dan selalu melewati approval Ryuu.
+`github_delete_repository` menghapus repository secara permanen dan hanya
+berjalan bila argumen `confirm` berisi `owner/repo` yang sama persis; proxy
+backend baru mengizinkannya lewat safelist `DELETE /repos/{owner}/{repo}`.
+Penghapusan repository, penghapusan file, dan merge pull request berisiko
+`destructive` dan selalu melewati approval Ryuu.
 
 ## Approval & keamanan
 
 - `risk: read` berjalan tanpa prompt.
 - Semua tool `write` memakai `requiresApproval: true`.
-- `github_delete_file` dan `github_merge_pull_request` memakai
+- `github_delete_file`, `github_merge_pull_request`, dan
+  `github_delete_repository` memakai
   `risk: destructive` (approval wajib).
+- `github_delete_repository` menuntut `confirm` = `owner/repo`; nilai lain
+  ditolak sebagai `VALIDATION_FAILED` sebelum request dibuat.
 - `confirmDestructive: false` memblokir operasi destruktif di handler, bukan
   hanya mengandalkan prompt.
 - Tool memanggil `plugin.requireClient()` setiap kali, sehingga model yang

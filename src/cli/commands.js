@@ -93,9 +93,17 @@ export function createCommands(state) {
 
   const commands = new Map();
 
-  // `details` is the optional tutorial shown by `/help <command>`.
-  const define = (name, description, usage, handler, details = null) => {
-    commands.set(name, { name, description, usage, handler, details });
+  // `details` is the optional tutorial shown by `/help <command>`; `meta` marks
+  // plugin commands so `/help` can list their subcommand usage separately.
+  const define = (name, description, usage, handler, details = null, meta = {}) => {
+    commands.set(name, { name, description, usage, handler, details, ...meta });
+  };
+
+  /** Usage line for `/help <command>` without printing the command name twice. */
+  const usageLine = (command) => {
+    const prefix = `/${command.name}`;
+    const usage = String(command.usage || '').trim();
+    return usage.startsWith(prefix) ? usage : `${prefix} ${usage}`.trim();
   };
 
   const stateDir = () => stateDirFor(config.workspace);
@@ -178,14 +186,23 @@ export function createCommands(state) {
       const command = commands.get(target);
       if (!command) return print(`Unknown command: /${target}. Run /help.`);
       const details = command.details ? `\n\n${command.details}` : '';
-      return print(`/${command.name} ${command.usage}\n  ${command.description}${details}`);
+      return print(`${usageLine(command)}\n  ${command.description}${details}`);
     }
     const rows = [...commands.values()].map((command) => `  /${command.name.padEnd(12)} ${command.description}`);
     const flagRows = CLI_FLAGS.map(([flag, description]) => `  ${flag.padEnd(20)} ${description}`);
+    const pluginRows = [...commands.values()]
+      .filter((command) => command.plugin)
+      .flatMap((command) => [
+        `  ${usageLine(command)}`,
+        ...(command.examples || []).map((line) => `      ${line}`),
+      ]);
     print(
       [
         'Ryuu commands',
         ...rows,
+        ...(pluginRows.length
+          ? ['', 'Plugin commands (available while the plugin is loaded; details: /help <command>):', ...pluginRows]
+          : []),
         '',
         'CLI flags (set at startup, e.g. `ryuu --auto-approve "task"`, and listed in `ryuu --help`):',
         ...flagRows,
@@ -1141,6 +1158,16 @@ export function createCommands(state) {
           '  enable         mendaftarkan tool GitHub untuk AI Agent',
           '  disable        melepas tool tanpa menghapus akun/token',
         ].join('\n'),
+        {
+          plugin: true,
+          examples: [
+            'login          open the browser and wait for the GitHub approval',
+            'login --device headless device flow, no browser needed',
+            'status | account | test   inspect connection, account and API access',
+            'enable | disable          register or remove the GitHub AI tools',
+            'config                    show settings without any secret',
+          ],
+        },
       );
       continue;
     }
@@ -1157,6 +1184,21 @@ export function createCommands(state) {
       `Google Drive integration: login | logout | account | enable | disable | status | config | test`,
       '/drive [login|logout|account|enable|disable|status|config|test]',
       async (args = '') => handler(args, print),
+      [
+        '  Autentikasi memakai OAuth Google lewat backend Ryuu; CLI tidak menyimpan token Google.',
+        '  login          menghubungkan akun Google lewat browser',
+        '  enable         mendaftarkan tool Drive untuk AI Agent',
+        '  disable        melepas tool tanpa menghapus akun/token',
+      ].join('\n'),
+      {
+        plugin: true,
+        examples: [
+          'login | logout            connect or disconnect the Google account',
+          'account | status | test   inspect the connection and the granted scopes',
+          'enable | disable          register or remove the Drive AI tools',
+          'config                    show settings without any secret',
+        ],
+      },
     );
   }
 

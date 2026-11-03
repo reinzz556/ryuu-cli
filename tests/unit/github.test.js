@@ -143,7 +143,7 @@ test('tool GitHub terdaftar dengan schema valid dan risk level yang benar', asyn
   registry.registerPlugin({ name: plugin.name, version: plugin.version, tools: plugin.tools });
 
   const names = registry.plugins.get('github').toolNames;
-  assert.equal(names.length, 35);
+  assert.equal(names.length, 36);
   assert.equal(new Set(names).size, names.length);
   for (const expected of [
     'github_get_me',
@@ -167,11 +167,12 @@ test('tool GitHub terdaftar dengan schema valid dan risk level yang benar', asyn
     assert.equal(tool.risk, 'write');
     assert.equal(tool.requiresApproval, true, `${name} harus melewati approval`);
   }
-  for (const name of ['github_delete_file', 'github_merge_pull_request']) {
+  for (const name of ['github_delete_file', 'github_merge_pull_request', 'github_delete_repository']) {
     const tool = plugin.tools.find((entry) => entry.name === name);
     assert.equal(tool.risk, 'destructive');
     assert.equal(tool.requiresApproval, true);
   }
+  assert.ok(names.includes('github_delete_repository'));
 });
 
 test('approval system menolak write pada read-only dan menyetujui pada policy auto', async () => {
@@ -201,6 +202,39 @@ test('confirmDestructive=false memblokir operasi destruktif sebelum menyentuh ja
       return true;
     },
   );
+
+  const dropRepo = plugin.tools.find((tool) => tool.name === 'github_delete_repository');
+  await assert.rejects(
+    () => dropRepo.handler({ owner: 'octocat', repo: 'hello', confirm: 'octocat/hello' }),
+    (error) => {
+      assert.equal(error.code, 'GITHUB_DESTRUCTIVE_BLOCKED');
+      return true;
+    },
+  );
+});
+
+test('github_delete_repository menuntut konfirmasi owner/repo yang sama persis', async () => {
+  const { plugin } = await makePlugin();
+  const tool = plugin.tools.find((entry) => entry.name === 'github_delete_repository');
+  assert.equal(tool.schema.required.includes('confirm'), true);
+
+  const cases = [
+    { confirm: '' },
+    { confirm: 'hello' },
+    { confirm: 'octocat/other' },
+    { confirm: 'other/hello' },
+  ];
+  for (const extra of cases) {
+    await assert.rejects(
+      () => tool.handler({ owner: 'octocat', repo: 'hello', ...extra }),
+      (error) => {
+        assert.equal(error.code, 'VALIDATION_FAILED');
+        assert.match(error.message, /octocat\/hello/);
+        return true;
+      },
+      `confirm "${extra.confirm}" harus ditolak`,
+    );
+  }
 });
 
 test('command /github memakai parser Ryuu dan mencetak status tanpa token', async () => {
@@ -282,10 +316,10 @@ test('sync tool menghormati status enabled dan authenticated', async () => {
   await saveCredentials({ cliToken: `ghcli_${'b'.repeat(43)}`, account: { login: 'octocat' } }, { paths });
   plugin.stored = null;
   const count = await syncPluginTools(plugin, registry);
-  assert.equal(count, 35);
+  assert.equal(count, 36);
   assert.equal(registry.has('github_get_me'), true);
 
   const removed = unregisterPluginTools(plugin, registry);
-  assert.equal(removed, 35);
+  assert.equal(removed, 36);
   assert.equal(registry.has('github_get_me'), false);
 });

@@ -138,7 +138,8 @@ test('/help <command> shows usage for one command', async () => {
   const { commands, renderer, cleanup } = await makeCommands();
   try {
     await commands.execute(parseCommandLine('/help exit'));
-    assert.match(renderer.text, /\/exit \/exit/);
+    // The command name must appear once, followed by the description.
+    assert.match(renderer.text, /^\/exit\n  Exit the CLI/m);
     await commands.execute(parseCommandLine('/help nope'));
     assert.match(renderer.text, /Unknown command: \/nope\. Run \/help\./);
   } finally {

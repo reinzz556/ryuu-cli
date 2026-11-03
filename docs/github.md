@@ -6,7 +6,7 @@ integrasi GitHub pada Ryuu CLI. Integrasi terdiri dari dua bagian:
 1. **Backend** (`/root/website/api`, modul `lib/github/`) — Integration Gateway
    yang memegang seluruh kredensial GitHub App dan token pengguna.
 2. **Plugin CLI** (`/root/agents/ryuu/plugins/github/`) — command `/github` dan
-   35 tool AI yang memanggil GitHub melalui gateway.
+   36 tool AI yang memanggil GitHub melalui gateway.
 
 Tidak ada Client Secret, Private Key, Webhook Secret, access token, atau refresh
 token di sisi CLI. CLI hanya memegang `cliToken` per akun yang disimpan
@@ -274,7 +274,7 @@ halaman instalasi App.
 | Kelompok | Tool |
 | --- | --- |
 | Akun | `github_get_me`, `github_get_user`, `github_get_rate_limit` |
-| Repository | `github_list_repositories`, `github_get_repository`, `github_create_repository`, `github_update_repository`, `github_list_branches`, `github_get_branch`, `github_list_commits`, `github_get_commit`, `github_get_file_contents`, `github_create_or_update_file`, `github_delete_file`, `github_compare_commits` |
+| Repository | `github_list_repositories`, `github_get_repository`, `github_create_repository`, `github_update_repository`, `github_delete_repository`, `github_list_branches`, `github_get_branch`, `github_list_commits`, `github_get_commit`, `github_get_file_contents`, `github_create_or_update_file`, `github_delete_file`, `github_compare_commits` |
 | Issue | `github_list_issues`, `github_get_issue`, `github_create_issue`, `github_update_issue`, `github_comment_issue`, `github_list_issue_comments` |
 | Pull request | `github_list_pull_requests`, `github_get_pull_request`, `github_create_pull_request`, `github_update_pull_request`, `github_merge_pull_request`, `github_list_pull_request_files`, `github_review_pull_request` |
 | Release | `github_list_releases`, `github_get_release`, `github_create_release` |
@@ -286,14 +286,20 @@ autentikasi, pembatasan output, dan deskripsi permission yang dibutuhkan.
 Operasi yang mengubah data selalu melewati approval Ryuu:
 
 - membuat/mengubah repository;
+- menghapus repository;
 - membuat/mengubah/menghapus file;
 - membuat/mengubah issue dan komentar;
 - membuat/mengubah/merge pull request dan review;
 - membuat release;
 - menjalankan ulang workflow.
 
-`github_delete_file` dan `github_merge_pull_request` berisiko `destructive`.
-`confirmDestructive: false` memblokirnya sepenuhnya.
+`github_delete_file`, `github_merge_pull_request`, dan `github_delete_repository`
+berisiko `destructive`. `confirmDestructive: false` memblokirnya sepenuhnya.
+
+`github_delete_repository` adalah satu-satunya tool yang menghapus repository.
+Selain approval Ryuu, handler-nya menuntut argumen `confirm` berisi
+`owner/repo` yang sama persis, sehingga model tidak bisa menghapus repository
+tanpa token konfirmasi eksplisit dari pengguna:
 
 ---
 

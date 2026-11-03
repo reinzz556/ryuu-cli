@@ -3,6 +3,23 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] - 2026-11-03
+
+### Ditambahkan
+
+- **`github_delete_repository`** — menghapus repository GitHub secara permanen.
+  Berisiko `destructive`, selalu melewati approval Ryuu, dan hanya berjalan bila
+  argumen `confirm` berisi `owner/repo` yang sama persis. Bisa dimatikan dengan
+  `/github config set confirmDestructive false`.
+- **Panduan `/github` dan `/drive` di `/help`** — `/help` kini menampilkan daftar
+  subcommand kedua plugin selama plugin dimuat, dan `/help drive` menampilkan
+  tutorial seperti `/help github`.
+
+### Diubah
+
+- Safelist proxy backend menerima `DELETE /repos/{owner}/{repo}` khusus untuk
+  tool penghapusan repository; endpoint DELETE lain tetap ditolak.
+
 ## [0.5.1] - 2026-11-03
 
 Rilis ini menambahkan integrasi GitHub App sebagai plugin opsional, dengan

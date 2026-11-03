@@ -222,7 +222,7 @@ test('login → tool terdaftar → tool berjalan → disable/enable → logout m
 
   // Login otomatis mengaktifkan dan command mendaftarkan tool.
   assert.equal(await plugin.isEnabled(), true);
-  assert.equal(registry.plugins.get('github')?.toolNames.length, 35);
+  assert.equal(registry.plugins.get('github')?.toolNames.length, 36);
 
   const me = await registry.execute('github_get_me', {}, {});
   assert.equal(me.result.ok, true);
