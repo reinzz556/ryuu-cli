@@ -3,7 +3,9 @@ import { PASTE_END, PASTE_START, PasteRegistry } from './input.js';
 import { charWidth, displayWidth } from './width.js';
 import { renderMarkdown } from './markdown.js';
 import { readVersion } from '../utils/version.js';
+import { bannerHint, bannerLines } from './banner.js';
 import { copyToClipboard } from '../services/clipboard.js';
+import { toolDisplayName } from '../utils/tool-display.js';
 import {
   cleanModelTokens,
   cleanReasoning,
@@ -260,53 +262,11 @@ function bannerRow(content, width, c) {
   return ` ${c.hex(PALETTE.sky)('│')} ${clipped}${' '.repeat(pad)}${c.hex(PALETTE.sky)('│')}`;
 }
 
-/** The opening frame: wordmark, tagline and telemetry, all width-aware. */
+/** Banner TUI: logo R + identitas/telemetri, lebar-aware. */
 export function bannerRows(header = {}, width, { c } = {}) {
-  const rows = [];
-  const inner = Math.max(6, width - 4);
-  const paint = (name, text) => c.hex(PALETTE[name])(String(text));
-  rows.push(bannerTop('◢ RYUU // AGENT OS', `v${header.version}`, width, c));
-  rows.push(bannerRow('', width, c));
-
-  const art = inner >= 44 ? WORDMARK : inner >= 16 ? WORDMARK_COMPACT : null;
-  if (art) {
-    const artWidth = Math.max(...art.map((line) => line.length));
-    const pad = Math.max(0, Math.floor((inner - artWidth) / 2));
-    for (const line of art) {
-      rows.push(bannerRow(`${' '.repeat(pad)}${gradient(c, line, WORDMARK_GRADIENT)}`, width, c));
-    }
-  } else {
-    rows.push(bannerRow(` ${c.bold(gradient(c, 'RYUU', WORDMARK_GRADIENT))}`, width, c));
-  }
-  rows.push(bannerRow('', width, c));
-
-  const tagline = 'autonomous coding intelligence · NVIDIA';
-  if (inner >= tagline.length) {
-    rows.push(
-      bannerRow(c.dim(`${' '.repeat(Math.floor((inner - tagline.length) / 2))}${tagline}`), width, c),
-    );
-    rows.push(bannerRow('', width, c));
-  }
-
-  rows.push(bannerMid('◆ TELEMETRY', width, c));
-  const fields = [
-    ['model', header.model || '—'],
-    ['workspace', header.workspace || '—'],
-    ['runtime', header.node ? `Node.js ${header.node} · ${process.platform}` : '—'],
-    ['access', `${header.approvalPolicy || 'ask'} · shell is not a sandbox`],
-  ];
-  if (header.logFile) fields.push(['log', header.logFile]);
-  const valueWidth = Math.max(8, inner - 11);
-  for (const [label, value] of fields) {
-    const wrapped = wrapText(String(value ?? ''), valueWidth);
-    rows.push(bannerRow(`${paint('sky', label.padEnd(10))} ${wrapped[0] || ''}`, width, c));
-    for (const extra of wrapped.slice(1)) rows.push(bannerRow(`${' '.repeat(11)}${extra}`, width, c));
-  }
-  rows.push(bannerBottom(width, c));
-  const hint =
-    'type a task · /help commands · !cmd shell · click a prompt or code block to copy · PgUp/PgDn scroll';
-  for (const line of wrapText(hint, Math.max(10, width - 2))) rows.push(` ${paint('gray', line)}`);
-  return rows;
+  const lines = bannerLines(header, { width, c });
+  lines.push(bannerHint({ width, c, compact: width < 66 }));
+  return lines;
 }
 
 /** The conversation model: ordered items, each with a stable id. */
@@ -618,11 +578,12 @@ function buildRows(item, width, { c, color }) {
     const mark = failed ? paint('red', '✕') : paint('green', '✓');
     // Plugin tools wear their own colour — sky blue and bold — so an installed
     // integration never looks like built-in tooling. A failure is still red.
+    const label = toolDisplayName(item.name, item.plugin);
     const name = failed
-      ? c.bold(paint('red', item.name))
+      ? c.bold(paint('red', label))
       : item.plugin
-        ? c.bold(paint('sky', item.name))
-        : paint('yellow', item.name);
+        ? c.bold(paint('sky', label))
+        : paint('yellow', label);
     if (failed) {
       pushHeader(`${mark} ${name}${item.durationMs ? ` ${dim(`· ${formatSeconds(item.durationMs)}`)}` : ''}`);
       pushWrapped(item.summary || 'tool failed', '   ', 'redSoft', { dimmed: true });
@@ -1142,9 +1103,10 @@ export class Tui {
     this.requestRender();
   }
 
-  toolDenied({ name = '', reason = '' } = {}) {
+  toolDenied({ name = '', reason = '', plugin = null } = {}) {
+    const label = toolDisplayName(name, plugin);
     this.transcript.message(
-      ` ${this.paint('amber', '⛔')} ${this.paint('amber', `${name} denied${reason ? ` · ${reason}` : ''}`)}`,
+      ` ${this.paint('amber', '⛔')} ${this.paint('amber', `${label} denied${reason ? ` · ${reason}` : ''}`)}`,
     );
     this.requestRender();
   }
@@ -1499,11 +1461,8 @@ export class Tui {
     }
     if (this.status.tool) {
       // Plugin tools are sky blue and bold here too, matching the transcript.
-      parts.push(
-        this.status.toolPlugin
-          ? this.c.bold(this.paint('sky', this.status.tool))
-          : this.paint('yellow', this.status.tool),
-      );
+      const label = toolDisplayName(this.status.tool, this.status.toolPlugin);
+      parts.push(this.status.toolPlugin ? this.c.bold(this.paint('sky', label)) : this.paint('yellow', label));
     }
     if (this.toast && Date.now() <= this.toast.until) parts.push(this.paint('green', this.toast.text));
     if (this.status.promptTokens || this.status.completionTokens) {

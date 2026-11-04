@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { toolDisplayName } from '../utils/tool-display.js';
 import {
   DEFAULT_PROVIDER_ID,
   MAX_EXTRA_PROVIDERS,
@@ -31,6 +32,7 @@ import { PROVIDER_INFO } from '../services/websearch/providers.js';
 import { runUserShell } from '../services/ushell.js';
 import { createDriveCommand } from '../../plugins/google-drive/command.js';
 import { createGitHubCommand } from '../../plugins/github/command.js';
+import { createVercelCommand } from '../../plugins/vercel/command.js';
 import { RyuuError } from '../utils/errors.js';
 
 export function parseCommandLine(line) {
@@ -872,7 +874,8 @@ export function createCommands(state) {
   });
 
   define('tools', 'List registered tools and their risk level', '/tools', async () => {
-    const rows = registry.list().map((tool) => `  ${tool.name.padEnd(20)} ${tool.risk.padEnd(12)} ${tool.requiresApproval ? 'approval' : 'auto'}`);
+    const rows = registry.list().map((tool) =>
+      `  ${toolDisplayName(tool.name, registry.pluginFor(tool.name)).padEnd(20)} ${tool.risk.padEnd(12)} ${tool.requiresApproval ? 'approval' : 'auto'}`);
     print([`${registry.list().length} tools`, ...rows].join('\n'));
   });
 
@@ -1166,6 +1169,40 @@ export function createCommands(state) {
             'status | account | test   inspect connection, account and API access',
             'enable | disable          register or remove the GitHub AI tools',
             'config                    show settings without any secret',
+          ],
+        },
+      );
+      continue;
+    }
+    if (plugin.name === 'vercel') {
+      const handler = createVercelCommand({
+        plugin,
+        registry,
+        confirm: (question) => state.confirmLocal(question),
+        openBrowser: true,
+        showCode: state.showCode || null,
+      });
+      define(
+        'vercel',
+        'Vercel integration: login | logout | projects | deployments | env | domains | dns | edge | config',
+        '/vercel <login|logout|status|account|teams|projects|deployments|env|domains|dns|edge|logs|configure|test|enable|disable|config>',
+        async (args = '') => handler(args, print),
+        [
+          '  Autentikasi memakai Vercel OAuth Integration lewat backend Ryuu.',
+          '  Client Secret dan access token Vercel tidak pernah disimpan di CLI.',
+          '  login          membuka halaman instalasi Vercel lalu menunggu persetujuan',
+          '  enable         mendaftarkan tool Vercel untuk AI Agent',
+          '  disable        melepas tool tanpa menghapus akun/token di backend',
+        ].join('\n'),
+        {
+          plugin: true,
+          examples: [
+            'login                     connect a Vercel account via OAuth',
+            'projects | deployments    inspect projects and recent deployments',
+            'logs dpl_xxx --problems   show only failing build lines',
+            'env add web API_URL …     add an environment variable (approval)',
+            'configure                 open the Vercel configuration page',
+            'status | test             check the connection and API access',
           ],
         },
       );

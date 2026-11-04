@@ -3,6 +3,62 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-04
+
+Rilis ini menambahkan integrasi Vercel berbasis **OAuth Integration** (bukan
+Personal Access Token) sebagai plugin opsional, plus welcome banner baru.
+
+### Ditambahkan
+
+- **Integrasi Vercel (`plugins/vercel/`)** — 46 tool AI untuk akun, team,
+  project, deployment, environment variable, domain, DNS, Edge Config,
+  deployment check, webhook, dan billing (read-only).
+- **Command `/vercel`** — login/logout/status, project, deployment, env,
+  domain, DNS, Edge Config, log/event/check, configure/test/config.
+- **Penyimpanan kredensial terenkripsi** — CLI hanya menyimpan token CLI
+  (`vcli_…`) dengan AES-256-GCM; Client Secret dan access token Vercel tetap di
+  backend. Path mengikuti OS (`~/.config/ryuu`, Application Support, `%APPDATA%`)
+  dengan permission `0600`.
+- **OAuth flow dengan state sekali pakai dan pairing secret** — callback
+  ditukar server-side; token disimpan per akun/configuration.
+- **Webhook `POST /webhooks/vercel`** — verifikasi HMAC-SHA1 atas raw body,
+  deduplikasi delivery, penanganan uninstall/scope-change.
+- **Mock-tested backend** (`tests/vercel/`) dan **CLI tests** untuk config,
+  kredensial, backend client, tools, dan command.
+- **Konfigurasi CLI otomatis** — `integrations/vercel/config.json` dibuat sendiri
+  (mode `0600`) saat belum ada; bila isinya tidak valid, `/vercel …`
+  menampilkan diagnostik path + penyebab + contoh JSON lalu berhenti tanpa
+  menjalankan perintah, dan file yang rusak tidak pernah ditimpa.
+
+### Diubah
+
+- **Welcome banner** kini memakai logo “R” dengan gradasi vertikal pink → biru
+  langit (TrueColor, fallback 256/16 warna), menampilkan versi, workspace,
+  runtime/OS, model, access, dan lokasi log secara dinamis.
+- **Label tool plugin** dibaca `app:tool` di terminal (mis. `vercel:get_project`,
+  `github:get_me`, `drive:search`) pada baris tool, status bar, pesan denied, dan
+  `/tools`. Nama kanonik `app_tool` tetap dipakai ke model/provider karena nama
+  fungsi API tidak menerima tanda titik dua.
+- Versi project menjadi `0.6.0`.
+
+### Diperbaiki
+
+- **Login Vercel** tidak lagi gagal dengan “Respons akun Vercel tidak memuat id”:
+  `GET /v2/user` dibalas Vercel sebagai `{ user: { … } }`, dan bentuk itu kini
+  dinormalisasi di backend maupun tool `vercel_get_user`.
+
+### Keamanan
+
+- Client Secret tidak pernah ditulis ke source, plugin CLI, atau log.
+- Nilai environment variable tidak pernah dikembalikan ke model/terminal.
+- Proxy backend memakai safelist method+path dan memeriksa scope instalasi.
+
+### Catatan
+
+- Vercel tidak mendokumentasikan refresh token/revoke untuk token integrasi;
+  Ryuu tidak mengarang keduanya. Logout menghapus token tersimpan, dan
+  `integration-configuration.removed` membersihkan sisa instalasi.
+
 ## [0.5.2] - 2026-11-03
 
 ### Ditambahkan

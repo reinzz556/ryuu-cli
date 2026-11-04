@@ -294,18 +294,22 @@ test('the banner fits any terminal width and keeps the ascii wordmark when it fi
     const over = rows.filter((row) => displayWidth(row, { ansi: true }) > width);
     assert.equal(over.length, 0, `no banner row is wider than ${width} columns`);
     const plain = stripAnsi(rows.join('\n'));
-    assert.match(plain, /◢ RYUU \/\/ AGENT OS/);
-    assert.match(plain, /◆ TELEMETRY/);
+    assert.match(plain, /Ryuu CLI v9\.9\.9/);
     assert.match(plain, /workspace/);
+    assert.match(plain, /model/);
+    assert.match(plain, /access/);
   }
-  assert.match(stripAnsi(bannerRows(header, 100, { c: painted }).join('\n')), /██████╗/, 'wide terminals get the full wordmark');
-  assert.doesNotMatch(stripAnsi(bannerRows(header, 34, { c: painted }).join('\n')), /██████╗/, 'narrow terminals use the compact art');
+  assert.match(stripAnsi(bannerRows(header, 100, { c: painted }).join('\n')), /▄▄▄▄▄▄▄/, 'wide terminals get the logo R');
   assert.doesNotMatch(
+    stripAnsi(bannerRows(header, 34, { c: painted }).join('\n')),
+    /▄▄▄▄▄▄▄/,
+    'narrow terminals drop the logo instead of clipping it',
+  );
+  assert.match(
     stripAnsi(bannerRows(header, 26, { c: painted }).join('\n')),
     /v9\.9\.9/,
-    'the version is dropped rather than clipped when there is no room',
+    'the version stays readable at narrow widths',
   );
-  assert.match(stripAnsi(bannerRows(header, 100, { c: painted }).join('\n')), /v9\.9\.9/);
 });
 
 test('each kind of row has its own colour', () => {
@@ -553,14 +557,15 @@ test('plugin tools are painted sky blue in bold, built-ins stay yellow', () => {
 
     const rows = layoutTranscript(tui.transcript, 70, { c: painted, color: true }).map((row) => row.text);
     const builtin = rows.find((row) => row.includes('read_file'));
-    const plugin = rows.find((row) => row.includes('drive_search'));
+    const plugin = rows.find((row) => row.includes('drive:search'));
     assert.ok(builtin && plugin, 'both tools are on screen');
+    assert.ok(!rows.some((row) => row.includes('drive_search')), 'plugin tools read app:tool, not app_tool');
 
     assert.ok(builtin.includes(YELLOW), 'a built-in tool name stays yellow');
     assert.ok(!builtin.includes(SKY), 'a built-in tool name is not sky blue');
     assert.ok(plugin.includes(SKY), 'a plugin tool name is sky blue');
     assert.ok(!plugin.includes(YELLOW), 'a plugin tool name is not yellow');
-    const at = plugin.indexOf('drive_search');
+    const at = plugin.indexOf('drive:search');
     assert.ok(
       plugin.slice(Math.max(0, at - 40), at).includes('\x1b[1m'),
       'the plugin tool name is bold as well as sky blue',
@@ -576,7 +581,7 @@ test('a failed plugin tool is still painted red, never sky blue', () => {
     tui.toolEnd({ name: 'drive_upload', ok: false, durationMs: 4, summary: 'quota', plugin: 'google-drive' });
     tui.forceRender();
     const rows = layoutTranscript(tui.transcript, 70, { c: painted, color: true }).map((row) => row.text);
-    const failed = rows.find((row) => row.includes('drive_upload'));
+    const failed = rows.find((row) => row.includes('drive:upload'));
     assert.ok(failed, 'the failed tool is on screen');
     assert.ok(failed.includes(RED), 'a failure stays red');
     assert.ok(!failed.includes(SKY), 'a failure does not borrow the plugin colour');

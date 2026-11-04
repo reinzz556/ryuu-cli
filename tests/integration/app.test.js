@@ -113,7 +113,7 @@ test('banner shows model/workspace but never the API key', async () => {
   try {
     ctx.app.banner();
     const output = ctx.stdout.getData();
-    assert.match(output, /Ryuu Agent CLI v0\.1\.0/);
+    assert.match(output, /Ryuu CLI v0\.1\.0/);
     assert.match(output, /test\/model/);
     assert.match(output, new RegExp(ctx.config.workspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.ok(!output.includes('nvapi-test-key-123456'));

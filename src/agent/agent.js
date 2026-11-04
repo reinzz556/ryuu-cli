@@ -1168,7 +1168,7 @@ export class Agent {
               critical: assessment?.level === 'critical',
             });
             if (!decision.approved) {
-              this.#emit('toolDenied', { name: call.name, reason: decision.reason });
+              this.#emit('toolDenied', { name: call.name, reason: decision.reason, plugin: pluginName });
               session.transcript.push({ role: 'tool', name: call.name, ok: false, content: decision.reason, at: nowIso() });
               this.#toolReply(messages, call, {
                 ok: false,

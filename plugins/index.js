@@ -1,5 +1,6 @@
 import { createGoogleDrivePlugin, googleDrivePluginDescriptor } from './google-drive/index.js';
 import { createGitHubPlugin, githubPluginDescriptor } from './github/index.js';
+import { createVercelPlugin, vercelPluginDescriptor } from './vercel/index.js';
 
 /**
  * Plugin host for Ryuu CLI.
@@ -14,6 +15,7 @@ import { createGitHubPlugin, githubPluginDescriptor } from './github/index.js';
 const FACTORIES = [
   { descriptor: googleDrivePluginDescriptor, create: (options) => createGoogleDrivePlugin(options) },
   { descriptor: githubPluginDescriptor, create: (options) => createGitHubPlugin(options) },
+  { descriptor: vercelPluginDescriptor, create: (options) => createVercelPlugin(options) },
 ];
 
 /** Instantiate every known plugin. Failures are reported, not fatal. */
@@ -55,4 +57,4 @@ export function unregisterPluginTools(plugin, registry) {
   return names.length;
 }
 
-export { googleDrivePluginDescriptor, githubPluginDescriptor };
+export { googleDrivePluginDescriptor, githubPluginDescriptor, vercelPluginDescriptor };

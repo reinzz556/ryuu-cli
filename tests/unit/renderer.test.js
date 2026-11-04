@@ -490,11 +490,11 @@ test('TTY banner renders the HUD and the prompt uses ryuu', () => {
   });
   const output = stdout.getData();
   const visible = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-  assert.match(visible, /RYUU \/\/ AGENT OS/);
-  assert.match(visible, /██████╗/);
-  assert.match(visible, /autonomous coding intelligence/);
-  assert.match(output, /TELEMETRY/);
-  assert.match(output, /workspace/);
+  assert.match(visible, /Ryuu CLI v0\.1\.0/);
+  assert.match(visible, /▄▄▄▄▄▄▄/);
+  assert.match(visible, /workspace/);
+  assert.match(visible, /access/);
+  assert.match(visible, /\/tmp\/fixture\/\.ryuu\/logs\/agent\.log/);
   assert.match(output, /test\/model/);
   assert.match(renderer.prompt().replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ''), /ryuu/);
 
@@ -510,7 +510,7 @@ test('TTY banner renders the HUD and the prompt uses ryuu', () => {
     logFile: null,
   });
   const narrow = narrowStdout.getData().replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-  assert.match(narrow, /██████╗/);
+  assert.match(narrow, /Ryuu CLI v0\.1\.0/);
   assert.ok(narrow.split('\n').every((line) => line.length <= 60));
 
   const plain = capture({ isTTY: false });
@@ -845,9 +845,10 @@ test('a plugin tool name is sky blue in bold in the line renderer, built-ins sta
   const sky = '\x1b[38;2;56;189;248m';
   const blue = '\x1b[38;2;96;165;250m';
   const lines = data.split('\n');
-  const pluginLine = lines.find((line) => line.includes('✓') && line.includes('drive_search'));
+  const pluginLine = lines.find((line) => line.includes('✓') && line.includes('drive:search'));
   const builtInLine = lines.find((line) => line.includes('✓') && line.includes('read_file'));
   assert.ok(pluginLine && builtInLine, 'both tool lines are printed');
+  assert.ok(!pluginLine.includes('drive_search'), 'plugin tools read app:tool, not app_tool');
   assert.ok(pluginLine.includes(sky), 'the plugin tool name is sky blue');
   assert.ok(pluginLine.includes('\x1b[1m'), 'and bold');
   assert.ok(builtInLine.includes(blue), 'a built-in tool name keeps the flat blue');

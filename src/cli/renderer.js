@@ -1,7 +1,9 @@
 import { Chalk } from 'chalk';
+import { bannerHint, bannerLines } from './banner.js';
 import { renderInline, renderMarkdown } from './markdown.js';
 import { ANSI_SEQUENCE, charWidth, displayWidth } from './width.js';
 import { copyToClipboard } from '../services/clipboard.js';
+import { toolDisplayName } from '../utils/tool-display.js';
 
 const MAX_REASONING_CHARS = 2_000_000;
 const ANSI_AT = /\x1b\[[0-?]*[ -/]*[@-~]/y;
@@ -316,7 +318,7 @@ export class Renderer {
    * bold so an installed integration is visible at a glance.
    */
   #toolName(name, plugin) {
-    const text = String(name ?? '');
+    const text = toolDisplayName(name, plugin);
     return plugin ? this.c.bold(this.c.hex(PALETTE.sky)(text)) : this.c.hex(PALETTE.blue)(text);
   }
 
@@ -545,60 +547,24 @@ export class Renderer {
   banner({ version, model, provider, workspace, node, approvalPolicy, logFile }) {
     const c = this.c;
     if (this.plain) {
-      this.#write(`Ryuu Agent CLI v${version}`);
-      this.#write(`provider: ${provider}`);
-      this.#write(`model: ${model}`);
-      this.#write(`workspace: ${workspace}`);
-      this.#write(`node: ${node}`);
-      this.#write(`approval: ${approvalPolicy}`);
-      this.#write(`log: ${logFile || '(disabled)'}`);
+      for (const line of bannerLines(
+        { version, model, provider, workspace, node, approvalPolicy, logFile },
+        { width: 100, c: null },
+      )) {
+        this.#write(line.trimEnd());
+      }
       this.#write('');
       return;
     }
 
-    const inner = this.#innerWidth();
-    const wordmark = [
-      '██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗',
-      '██╔══██╗╚██╗ ██╔╝██║   ██║██║   ██║',
-      '██████╔╝ ╚████╔╝ ██║   ██║██║   ██║',
-      '██╔══██╗  ╚██╔╝  ██║   ██║██║   ██║',
-      '██║  ██║   ██║   ╚██████╔╝╚██████╔╝',
-      '╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝',
-    ];
-    const wordmarkWidth = Math.max(...wordmark.map((line) => line.length));
-    const tagline = 'autonomous coding intelligence · NVIDIA';
     this.#write('');
-    this.#write(this.#top('◢ RYUU // AGENT OS', `v${version}`));
-    this.#write(this.#row(''));
-    for (const line of wordmark) {
-      const pad = Math.max(0, Math.floor((inner - wordmarkWidth) / 2));
-      this.#write(this.#row(`${' '.repeat(pad)}${this.#grad(line)}`));
+    for (const line of bannerLines(
+      { version, model, provider, workspace, node, approvalPolicy, logFile },
+      { width: this.#width(), c },
+    )) {
+      this.#write(line);
     }
-    this.#write(this.#row(''));
-    this.#write(
-      this.#row(c.dim(`${' '.repeat(Math.max(0, Math.floor((inner - tagline.length) / 2)))}${tagline}`)),
-    );
-    this.#write(this.#row(''));
-    this.#write(this.#mid('◆ TELEMETRY'));
-    this.#write(this.#row(`${this.#paint('cyan', 'model'.padEnd(10))} ${c.bold(this.#fit(model, inner - 12))}`));
-    this.#write(this.#row(`${this.#paint('cyan', 'workspace'.padEnd(10))} ${this.#fit(workspace, inner - 12)}`));
-    this.#write(
-      this.#row(`${this.#paint('cyan', 'runtime'.padEnd(10))} ${c.dim(`Node.js ${node} · ${process.platform}`)}`),
-    );
-    this.#write(
-      this.#row(`${this.#paint('cyan', 'access'.padEnd(10))} ${c.dim(`${approvalPolicy} · shell is not a sandbox`)}`),
-    );
-    if (logFile) {
-      this.#write(this.#row(`${this.#paint('cyan', 'log'.padEnd(10))} ${c.dim(this.#fit(logFile, inner - 12))}`));
-    }
-    this.#write(this.#bottom());
-    this.#write(
-      c.dim(
-        this.#width() >= 66
-          ? '  click a block or /expand N   !cmd shell   ⌃C cancel   /help commands   /exit quit'
-          : '  click block · /expand N · !cmd · ⌃C · /help · /exit',
-      ),
-    );
+    this.#write(bannerHint({ width: this.#width(), c, compact: this.#width() < 66 }));
     this.#write('');
   }
 
@@ -1393,7 +1359,7 @@ export class Renderer {
     }
     if (argsPreview.length > 160) argsPreview = `${argsPreview.slice(0, 160)}…`;
     if (this.plain) {
-      this.#write(`  ${this.#icon('→', '>')} ${name} ${this.c.dim(argsPreview)}`);
+      this.#write(`  ${this.#icon('→', '>')} ${toolDisplayName(name, plugin)} ${this.c.dim(argsPreview)}`);
       return;
     }
     this.#write(
@@ -1413,7 +1379,7 @@ export class Renderer {
     const detail = summary ? String(summary).replace(/\s+/g, ' ').slice(0, 220) : '';
     if (cached) {
       if (this.plain) {
-        this.#write(this.c.dim(`  [cached] ${name} · ${detail}`));
+        this.#write(this.c.dim(`  [cached] ${toolDisplayName(name, plugin)} · ${detail}`));
         return;
       }
       this.#write(`  ${this.c.dim('│')} ${this.#paint('cyan', '↺')} ${this.#toolName(name, plugin)} ${this.c.dim(`· ${detail}`)}`);
@@ -1422,13 +1388,13 @@ export class Renderer {
     if (this.plain) {
       const symbol = ok ? this.c.green('[ok]') : this.c.red('[fail]');
       this.#write(
-        `  ${symbol} ${name}${duration ? this.c.dim(` ${duration}`) : ''}${detail ? this.c.dim(` · ${detail}`) : ''}`,
+        `  ${symbol} ${toolDisplayName(name, plugin)}${duration ? this.c.dim(` ${duration}`) : ''}${detail ? this.c.dim(` · ${detail}`) : ''}`,
       );
       return;
     }
     const symbol = ok ? this.#paint('green', '✓') : this.#paint('red', '✕');
     const stats = [duration, detail].filter(Boolean).join(' · ');
-    const label = ok ? this.#toolName(name, plugin) : this.c.hex(PALETTE.red)(String(name ?? ''));
+    const label = ok ? this.#toolName(name, plugin) : this.c.hex(PALETTE.red)(toolDisplayName(name, plugin));
     this.#write(
       `  ${this.c.dim('│')} ${symbol} ${label}${stats ? ` ${this.c.dim(`· ${stats}`)}` : ''}`,
     );
@@ -1537,13 +1503,14 @@ export class Renderer {
     }
   }
 
-  toolDenied({ name, reason }) {
+  toolDenied({ name, reason, plugin = null }) {
+    const label = toolDisplayName(name, plugin);
     if (this.plain) {
-      this.#write(`  [denied] ${name} ${this.c.dim(`· ${reason}`)}`);
+      this.#write(`  [denied] ${label} ${this.c.dim(`· ${reason}`)}`);
       return;
     }
     this.#write(
-      `  ${this.c.dim('│')} ${this.#paint('amber', '⊘')} ${this.c.hex(PALETTE.blue)(name)} ${this.c.dim(`· ${reason}`)}`,
+      `  ${this.c.dim('│')} ${this.#paint('amber', '⊘')} ${this.c.hex(PALETTE.blue)(label)} ${this.c.dim(`· ${reason}`)}`,
     );
   }
 

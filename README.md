@@ -815,6 +815,27 @@ berpura-pura sebaliknya.
   `agent.streamIdleTimeoutMs` dibatalkan dengan `STREAM_STALLED` alih-alih
   menahan langkah tetap terbuka.
 
+## Plugin: Vercel
+
+Integrasi opsional berbasis **Vercel OAuth Integration** (bukan Personal Access
+Token). Client Secret dan access token Vercel hanya hidup di backend; CLI hanya
+menyimpan token CLI terenkripsi dan tidak pernah mencetak rahasia.
+
+```bash
+/vercel login                 # buka halaman instalasi Vercel di browser
+/vercel login --no-browser    # cetak URL saja (mesin headless)
+/vercel status | account      # configuration, team, scope, status backend
+/vercel projects              # daftar project + deployment terakhir
+/vercel deployments --target production
+/vercel env list <project>    # key/target, nilai tidak pernah ditampilkan
+/vercel logs <dpl_id> --problems
+/vercel enable                # daftarkan 46 tool Vercel untuk AI Agent
+```
+
+Operasi destruktif (hapus project/deployment/env/domain/DNS/Edge Config,
+promote, rollback) meminta approval Ryuu. Setup integrasi, tabel scope per tool,
+dan troubleshooting ada di **[docs/vercel.md](docs/vercel.md)**.
+
 ## Plugin: Google Drive
 
 Integrasi opsional yang tinggal di `agents/ryuu/plugins/` (bukan di `src/services/`) dan
