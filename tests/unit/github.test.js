@@ -12,16 +12,16 @@ import {
   updateGitHubConfig,
   validateConfigEntry,
   writeGitHubConfig,
-} from '../../plugins/github/config.js';
+} from '../../src/tools/advance/github/config.js';
 import {
   clearCredentials,
   describeCredentials,
   loadCredentials,
   saveCredentials,
-} from '../../plugins/github/credentials.js';
-import { createGitHubPlugin } from '../../plugins/github/manager.js';
-import { createGitHubCommand } from '../../plugins/github/command.js';
-import { syncPluginTools, unregisterPluginTools } from '../../plugins/index.js';
+} from '../../src/tools/advance/github/credentials.js';
+import { createGitHubPlugin } from '../../src/tools/advance/github/manager.js';
+import { createGitHubCommand } from '../../src/tools/advance/github/command.js';
+import { syncPluginTools, unregisterPluginTools } from '../../src/tools/advance/index.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { ApprovalManager } from '../../src/agent/approvals.js';
 import { parseCommandLine } from '../../src/cli/commands.js';

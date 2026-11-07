@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { VercelBackendClient } from '../../plugins/vercel/backend.js';
-import { VercelApi } from '../../plugins/vercel/api.js';
+import { VercelBackendClient } from '../../src/tools/advance/vercel/backend.js';
+import { VercelApi } from '../../src/tools/advance/vercel/api.js';
 
 function response(body, status = 200) {
     return {

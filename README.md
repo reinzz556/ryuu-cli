@@ -8,26 +8,20 @@ kompatibel dengan OpenAI: NVIDIA Integrate API dan Token Harbor sudah tersedia,
 dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 
 ```
-  ╭─ ◢ RYUU // AGENT OS ──────────────────────────────────────────── v0.3.1 ─╮
-  │                                                                          │
-  │                   ██████╗ ██╗   ██╗██╗   ██╗██╗   ██╗                    │
-  │                   ██╔══██╗╚██╗ ██╔╝██║   ██╗██║   ██╗                    │
-  │                   ██████╔╝ ╚████╔╝ ██║   ██╗██║   ██╗                    │
-  │                   ██╔══██╗  ╚██╔╝  ██║   ██╝██║   ██╗                    │
-  │                   ██║  ██║   ██║   ╚██████╔╝╚██████╔╝                    │
-  │                   ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═════╝                     │
-  │                                                                          │
-  │                 autonomous coding intelligence · NVIDIA                  │
-  │                                                                          │
-  ├─ ◆ TELEMETRY ────────────────────────────────────────────────────────────┤
-  │ model      minimaxai/minimax-m3.1-flash                                 │
-  │ workspace  /path/to/your/project                                         │
-  │ runtime    Node.js v25.x · linux                                         │
-  │ access     ask · shell is not a sandbox                                  │
-  │ log        /path/to/your/project/.ryuu/logs/agent.log                    │
-  ╰──────────────────────────────────────────────────────────────────────────╯
-  click a block or /expand N   !cmd shell   ⌃C cancel   /help commands   /exit quit
+  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.6.1
+  ██▀▀▀▀██▄  workspace  /path/to/your/project
+  ██    ▀██  runtime    Node.js v22.14.0 · Linux
+  ██▄▄▄▄██▀  model      minimaxai/minimax-m3.1-flash
+  ██▀▀██▄    access     ask
+  ██    ██▄  log        /path/to/your/project/.ryuu/logs/agent.log
+  ▀▀     ▀▀
+ type a task · /help commands · !cmd shell · click a prompt or code block to copy · PgUp/PgDn scroll
 ```
+
+Logo "R" di atas dicetak dengan gradasi pink → biru langit (TrueColor, turun ke
+256/16 warna secara otomatis); blok ini ditampilkan tanpa warna seperti mode
+`--plain`. Nilai `workspace`, `runtime`, `model`, `access`, dan `log` berasal dari
+sesi nyata, bukan teks statis.
 
 ![Contoh UI mode normal Ryuu](https://cdn.zass.in/JLdbvD233M.jpg)
 
@@ -45,9 +39,9 @@ dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 - **Gerbang persetujuan (approval gate)** — setiap aksi tulis, eksekusi, dan
   destruktif diperiksa sebelum dijalankan. Tool read-only tidak pernah meminta
   konfirmasi. Aksi yang ditolak dilaporkan kembali ke model.
-- **HUD kaya telemetri** — banner gradien `RYUU // AGENT OS`, panel telemetri,
-  feed aktivitas, panel reasoning live, kartu persetujuan, dan dasbor ringkasan
-  run. Baris aktivitas yang selalu menyala melaporkan fase, waktu berjalan per
+- **HUD kaya telemetri** — banner welcome dengan logo "R" bergradasi dan
+  identitas sesi (`workspace`, `runtime`, `model`, `access`, `log`), feed
+  aktivitas, panel reasoning live, kartu persetujuan, dan dasbor ringkasan run. Baris aktivitas yang selalu menyala melaporkan fase, waktu berjalan per
   fase, **total waktu run, nomor langkah, tool mana yang sedang berjalan dan
   berapa lagi mengantre (`writing edit_file src/x.js (2/5)`), jumlah token
   prompt/completion live, dan latensi token pertama**.
@@ -447,7 +441,7 @@ yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
 | `/clear` | Melupakan memori percakapan agar tugas berikutnya mulai bersih. | Sesi tersimpan tidak disentuh. |
 | `/memory [clear]` | Menampilkan apa yang diingat agent antar-tugas. | Dibatasi `agent.maxContextChars`. |
 | `/worklog` | Menampilkan fakta terverifikasi (file dibaca/diubah, command, temuan) yang akan dipakai agent alih-alih membaca ulang. | Dihapus oleh `/clear`. |
-| `/resume <session-id>` | Memulihkan memori percakapan sebuah sesi tersimpan. | Daftar id dengan `/history`. |
+| `/resume <session-id>` | Memulihkan memori percakapan sebuah sesi tersimpan; di `--tui`, transkrip sesi itu juga digambar ulang sehingga bisa di-scroll. | Daftar id dengan `/history`. |
 | `/status` | Provider, model, endpoint, status kunci, workspace, batas, jumlah proses/undo, tugas terakhir. | |
 | `/provider [user <name> \| add <name> <url> [apiKey] \| del <name>]` | Mendaftarkan provider beserta status kunci, berpindah provider, atau menambah/menghapus provider sendiri. | Riwayat percakapan dan worklog tetap. Pilihan disimpan di `.ryuu/preferences.json`; `--provider` menimpa per run. Provider sendiri disimpan di `config.json`. |
 | `/model [n]` | Mendaftarkan model milik provider aktif secara bernomor, atau berpindah model menurut nomor. | Disimpan per provider di `.ryuu/preferences.json`; tetap ada setelah restart. `--model` menimpa per run. |
@@ -640,7 +634,7 @@ pemanggilan divalidasi skemanya sebelum dieksekusi.
 | --- | --- | --- | --- |
 | `list_files` | read | tidak | Daftar direktori terfilter dan berpaginasi. |
 | `tree` | read | tidak | Pohon direktori dengan batas. |
-| `read_file` | read | tidak | Teks UTF-8; rentang baris yang diminta dialirkan, jadi juga bekerja untuk file di atas batas baca. |
+| `read_file` | read | tidak | Teks UTF-8; rentang baris yang diminta dialirkan, jadi juga bekerja untuk file di atas batas baca. Gambar `.png`, `.jpg`/`.jpeg`, `.gif`, dan `.webp` dilampirkan sebagai gambar sungguhan saat provider mendukung input gambar (`multimodal`). |
 | `file_info` | read | tidak | Ukuran, jenis, timestamp, jumlah baris. |
 | `search_files` | read | tidak | Pencarian nama/isi dengan pengecualian. |
 | `diff_file` | read | tidak | Diff terpadu tanpa menulis apa pun. |
@@ -838,7 +832,7 @@ dan troubleshooting ada di **[docs/vercel.md](docs/vercel.md)**.
 
 ## Plugin: Google Drive
 
-Integrasi opsional yang tinggal di `agents/ryuu/plugins/` (bukan di `src/services/`) dan
+Integrasi opsional yang tinggal di `src/tools/advance/` (bukan di `src/services/`) dan
 mendaftarkan toolnya ke registry yang sudah ada hanya ketika aktif **dan** sudah login.
 
 ```bash
@@ -856,11 +850,61 @@ Tool yang tersedia setelah aktif: `drive_search`, `drive_list`, `drive_get_metad
 Client ID dan Client Secret Google **tidak ada di CLI**: keduanya hanya tersimpan di
 proyek API (`website/api/lib/config.js`) yang melayani login lewat
 `/admin/tools/drive-cli`. CLI memakai kunci khusus login Drive yang tertanam di
-`plugins/google-drive/secret.js` (header `x-ryuu-drive-auth`, tidak dapat diubah dan
+`src/tools/advance/google-drive/secret.js` (header `x-ryuu-drive-auth`, tidak dapat diubah dan
 tidak pernah ditampilkan); root key admin tidak dipakai dan tidak dikirim ke CLI.
 
 Endpoint backend dan redirect URI bersifat hardcode dan tidak bisa diubah lewat
 command apa pun. Dokumentasi lengkap: **[docs/drive.md](docs/drive.md)**.
+
+## Plugin panduan dari GitHub
+
+Plugin di sini **hanya panduan**, bukan kode: yang diunduh adalah file Markdown/teks
+dari sebuah repository GitHub, disimpan di `.ryuu/plugins/<nama>/` milik workspace,
+lalu dikutip ke task brief ketika plugin diaktifkan. Tidak ada script, hook, atau
+tool baru yang dijalankan dari repository tersebut.
+
+```bash
+/plugin                      # daftar plugin terpasang + katalog bawaan
+/plugin install anti-slop    # nama bawaan, atau pakai link GitHub
+/plugin install https://github.com/owner/repo
+/plugin uninstall anti-slop
+/plugin enable anti-slop     # sama dengan /anti-slop enable
+```
+
+Setiap plugin yang terpasang mendapat command sendiri, jadi aktivasi dan
+penonaktifan memakai nama pluginnya:
+
+```bash
+/anti-slop enable            # panduannya dipakai pada task berikutnya
+/anti-slop disable           # berhenti dipakai, file tetap tersimpan
+/anti-slop                   # status singkat plugin itu
+```
+
+Plugin baru selalu mulai **nonaktif**. Yang diambil hanya `.md`, `.markdown`,
+`.mdx`, dan `.txt` (maksimum 24 file / 2 MB per plugin, satu file dipotong di
+512 KB), diurutkan dari `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `README.md`, lalu
+referensi terdekat. File seperti `CHANGELOG`, `CONTRIBUTING`, dan template
+`.github` dilewati. Instalasi memakai GitHub API untuk daftar isi (satu
+permintaan) lalu `raw.githubusercontent.com` untuk isinya, sehingga repository
+berukuran ratusan MB tidak perlu diunduh utuh; bila kuota API habis, set
+`GITHUB_TOKEN` atau coba lagi nanti.
+
+Katalog bawaan (pasang lewat namanya):
+
+| Nama | Repository | Isi |
+| --- | --- | --- |
+| `anti-slop` | `miqdadbadjuber/anti-slop` | aturan menyaring UI, teks, dan kode generik hasil AI |
+| `impeccable` | `pbakaus/impeccable` | kosakata desain: polish, critique, audit |
+| `taste-skill` | `Leonxlnx/taste-skill` | skill rasa desain dan art direction |
+| `stop-slop` | `hardikpandya/stop-slop` | menghapus penanda tulisan AI dari prosa |
+| `humanizer` | `blader/humanizer` | menghilangkan tanda tulisan buatan AI |
+| `no-ai-slop` | `petergyang/no-ai-slop` | 20+ pola AI slop pada tulisan |
+| `avoid-ai-writing` | `conorbronsdon/avoid-ai-writing` | audit dan tulis ulang konten |
+
+Panduan yang aktif masuk ke task brief, bukan ke system prompt, sehingga
+enable/disable berlaku pada task berikutnya tanpa restart. Totalnya dibatasi
+7.000 karakter per task dan ditandai sebagai teks pihak ketiga: dipakai sebagai
+referensi gaya, bukan sebagai instruksi baru atau izin melewati aturan agent.
 
 ## Model persetujuan dan izin
 
@@ -1311,7 +1355,7 @@ secara manual di Windows.
 - `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
   JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
   penyederhanaan dari halaman tersebut.
-- Ini project 0.3.1: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+- Ini project 0.6.1: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
 
 ## Daftar periksa validasi API langsung
 

@@ -5,7 +5,7 @@ integrasi GitHub pada Ryuu CLI. Integrasi terdiri dari dua bagian:
 
 1. **Backend** (`/root/website/api`, modul `lib/github/`) — Integration Gateway
    yang memegang seluruh kredensial GitHub App dan token pengguna.
-2. **Plugin CLI** (`/root/agents/ryuu/plugins/github/`) — command `/github` dan
+2. **Plugin CLI** (`src/tools/advance/github/`) — command `/github` dan
    36 tool AI yang memanggil GitHub melalui gateway.
 
 Tidak ada Client Secret, Private Key, Webhook Secret, access token, atau refresh
@@ -19,7 +19,7 @@ terenkripsi.
 ```
 ┌──────────────────────────┐        ┌─────────────────────────────────┐
 │ Ryuu CLI                 │        │ Backend Ryuu (lib/github)       │
-│ plugins/github           │        │                                 │
+│ src/tools/advance/github │        │                                 │
 │  /github login ──────────┼───────▶│ POST /integrations/github/connect│
 │  browser / device flow   │        │  state + PKCE + URL otorisasi   │
 │  polling sesi ───────────┼───────▶│ GET  /integrations/github/session│
@@ -464,7 +464,7 @@ curl -i "https://restapi.ryuu-dev.my.id/integrations/github/callback?state=inval
 └── tests/github/                    # 48 test lokal
 
 /root/agents/ryuu/
-├── plugins/github/                  # plugin CLI
+├── src/tools/advance/github/        # plugin CLI
 ├── docs/github.md                   # dokumen ini
 └── tests/{unit,integration}/github.test.js
 ```

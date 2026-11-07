@@ -11,15 +11,15 @@ import {
   updateDriveConfig,
   validateConfigEntry,
   writeDriveConfig,
-} from '../../plugins/google-drive/config.js';
-import { clearCredentials, loadCredentials, saveCredentials, describeCredentials } from '../../plugins/google-drive/credentials.js';
+} from '../../src/tools/advance/google-drive/config.js';
+import { clearCredentials, loadCredentials, saveCredentials, describeCredentials } from '../../src/tools/advance/google-drive/credentials.js';
 
-import { ZipWriter } from '../../plugins/google-drive/zip-writer.js';
-import { extractZip, listZipEntries, assertSafeEntryName, resolveInside } from '../../plugins/google-drive/zip-reader.js';
-import { collectFiles, isExcluded, compilePatterns, HARD_EXCLUDES } from '../../plugins/google-drive/backup.js';
-import { createGoogleDrivePlugin } from '../../plugins/google-drive/manager.js';
+import { ZipWriter } from '../../src/tools/advance/google-drive/zip-writer.js';
+import { extractZip, listZipEntries, assertSafeEntryName, resolveInside } from '../../src/tools/advance/google-drive/zip-reader.js';
+import { collectFiles, isExcluded, compilePatterns, HARD_EXCLUDES } from '../../src/tools/advance/google-drive/backup.js';
+import { createGoogleDrivePlugin } from '../../src/tools/advance/google-drive/manager.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
-import { syncPluginTools, unregisterPluginTools } from '../../plugins/index.js';
+import { syncPluginTools, unregisterPluginTools } from '../../src/tools/advance/index.js';
 
 async function tempHome() {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ryuu-drive-test-'));
@@ -90,7 +90,7 @@ test('credentials: encrypted at rest, decryptable, and removable', async () => {
 });
 
 test('oauth: authorization URL is built by the backend, never by the CLI', async () => {
-  const backend = await import('../../plugins/google-drive/oauth-backend.js');
+  const backend = await import('../../src/tools/advance/google-drive/oauth-backend.js');
   // The endpoint is hardcoded: no config, command or env can change it.
   assert.equal(backend.DRIVE_OAUTH_BACKEND, 'https://restapi.ryuu-dev.my.id');
   assert.equal(backend.backendEndpoint(), 'https://restapi.ryuu-dev.my.id/admin/tools/drive-cli');
@@ -109,7 +109,7 @@ test('oauth: authorization URL is built by the backend, never by the CLI', async
 
 test('oauth: the embedded drive key is a derived header, never a stored secret', async () => {
   const { driveLoginToken, driveLoginHeaders, DRIVE_LOGIN_HEADER } = await import(
-    '../../plugins/google-drive/secret.js'
+    '../../src/tools/advance/google-drive/secret.js'
   );
   const token = driveLoginToken();
   // base64url of an HMAC digest: fixed length, URL-safe, stable across calls.
@@ -123,7 +123,7 @@ test('oauth: the embedded drive key is a derived header, never a stored secret',
 });
 
 test('oauth: token client refreshes through the backend and hides the token', async () => {
-  const { BackendTokenAuth } = await import('../../plugins/google-drive/token-client.js');
+  const { BackendTokenAuth } = await import('../../src/tools/advance/google-drive/token-client.js');
   let calls = 0;
   const auth = new BackendTokenAuth({
     accessToken: 'old-token',

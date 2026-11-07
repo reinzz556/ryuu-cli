@@ -180,6 +180,34 @@ export class Workspace {
   }
 
   /**
+   * Read a binary file (an image) as base64.
+   *
+   * readText() refuses anything containing a NUL byte, which every image does,
+   * so images need their own path through the same resolver: the secret-file
+   * and symlink rules still apply, and the caller sets the size cap because an
+   * image is far larger than a text file.
+   */
+  async readBinary(inputPath, { maxBytes = 4 * 1024 * 1024 } = {}) {
+    const { absPath, relPath, stat } = await this.resolveFile(inputPath);
+    if (stat.size > maxBytes) {
+      throw new ToolError(
+        `File is too large to read (${stat.size} bytes > limit ${maxBytes}). Downscale the image or pass a smaller max_bytes.`,
+        { path: relPath, size: stat.size, maxBytes },
+      );
+    }
+    if (stat.size === 0) throw new ToolError(`File is empty: ${relPath}`);
+    const buffer = await fsp.readFile(absPath);
+    return {
+      buffer,
+      base64: buffer.toString('base64'),
+      relPath,
+      absPath,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+    };
+  }
+
+  /**
    * Read a line range without loading the whole file into memory.
    *
    * A file above `maxBytes` cannot be read whole, but a range can still be

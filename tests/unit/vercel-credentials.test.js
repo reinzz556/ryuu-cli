@@ -3,13 +3,13 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import test from 'node:test';
 
-import { vercelPaths } from '../../plugins/vercel/config.js';
+import { vercelPaths } from '../../src/tools/advance/vercel/config.js';
 import {
     clearCredentials,
     describeCredentials,
     loadCredentials,
     saveCredentials,
-} from '../../plugins/vercel/credentials.js';
+} from '../../src/tools/advance/vercel/credentials.js';
 import { tempDir } from './helpers.js';
 
 const CLI_TOKEN = `vcli_${'a'.repeat(43)}`;

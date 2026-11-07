@@ -88,6 +88,7 @@ export class SessionStore {
       })),
       transcript: (session.transcript || []).slice(-200).map((entry) => ({
         role: entry.role,
+        ...(entry.kind ? { kind: String(entry.kind).slice(0, 16) } : {}),
         ...(entry.name ? { name: entry.name } : {}),
         ...(entry.ok !== undefined ? { ok: entry.ok } : {}),
         content: this.redact(String(entry.content || '')).slice(0, 4000),

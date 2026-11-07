@@ -311,6 +311,40 @@ test('ping reports success and failure without throwing', async () => {
   });
 });
 
+test('an image content part reaches the provider payload untouched', async () => {
+  await withConfig(async ({ config }) => {
+    let sent = null;
+    const provider = new NvidiaProvider(config, {
+      client: fakeClient(async (request) => {
+        sent = request;
+        return { ...successResponse, choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] };
+      }),
+    });
+    const imageUrl = 'data:image/png;base64,iVBORw0KGgo=';
+    await provider.chat({
+      messages: [
+        { role: 'user', content: 'look at it' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.png"}' } }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Image returned by read_file: a.png (image/png)' },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+    });
+    const imageTurn = sent.messages.find((message) => Array.isArray(message.content));
+    assert.equal(imageTurn.content[1].type, 'image_url');
+    assert.equal(imageTurn.content[1].image_url.url, imageUrl);
+  });
+});
+
 test('a broken tool call in the history is repaired before the request goes out', () => {
   const messages = [
     { role: 'user', content: 'go' },

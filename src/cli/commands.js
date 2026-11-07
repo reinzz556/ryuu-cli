@@ -30,9 +30,18 @@ import { formatDoctor, runDoctor } from '../services/doctor.js';
 import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { PROVIDER_INFO } from '../services/websearch/providers.js';
 import { runUserShell } from '../services/ushell.js';
-import { createDriveCommand } from '../../plugins/google-drive/command.js';
-import { createGitHubCommand } from '../../plugins/github/command.js';
-import { createVercelCommand } from '../../plugins/vercel/command.js';
+import { DEFAULT_PLUGINS, catalogEntry, parsePluginSource } from '../plugins/catalog.js';
+import {
+  getPlugin,
+  installPlugin,
+  listPlugins,
+  pluginsRoot,
+  setPluginEnabled,
+  uninstallPlugin,
+} from '../plugins/store.js';
+import { createDriveCommand } from '../tools/advance/google-drive/command.js';
+import { createGitHubCommand } from '../tools/advance/github/command.js';
+import { createVercelCommand } from '../tools/advance/vercel/command.js';
 import { RyuuError } from '../utils/errors.js';
 
 export function parseCommandLine(line) {
@@ -273,11 +282,16 @@ export function createCommands(state) {
     }
     agent.setConversation(conversation, { worklog: session.worklog || null });
     print(`Resumed ${conversation.length} message(s) from session ${id}.`);
-    print(
-      session.worklog
-        ? 'The saved worklog was restored too, so files already read or changed are not re-read.'
-        : 'The next task will be answered with that context. Run /memory to inspect it.',
-    );
+    // Draw the saved conversation in the TUI frame as well, so the user reads
+    // the earlier tasks instead of trusting that the agent remembers them.
+    const redrawn = state.restoreHistory?.({ id, entries: session.transcript || [] }) || 0;
+    if (redrawn === 0) {
+      print(
+        session.worklog
+          ? 'The saved worklog was restored too, so files already read or changed are not re-read.'
+          : 'The next task will be answered with that context. Run /memory to inspect it.',
+      );
+    }
   });
 
   define('status', 'Show provider, model, workspace, limits and the last task result', '/status', async () => {
@@ -1138,7 +1152,7 @@ export function createCommands(state) {
     );
   });
 
-  // Optional plugins (plugins/): each contributes one namespaced command so the
+  // Optional plugins (src/tools/advance/): each contributes one namespaced command so the
   // core parser stays untouched. `/drive` is only defined when the plugin loaded.
   for (const plugin of state.plugins || []) {
     if (plugin.name === 'github') {
@@ -1239,6 +1253,123 @@ export function createCommands(state) {
     );
   }
 
+  // GitHub guidance plugins. A pack is Markdown only — nothing from the
+  // repository is copied as code or executed; enabled packs are quoted into the
+  // task brief as style references.
+  const pluginWorkspace = () => config.workspace;
+
+  const pluginListText = async () => {
+    const workspace = pluginWorkspace();
+    const installed = await listPlugins(workspace);
+    const lines = [`Plugin folder: ${pluginsRoot(workspace)}`];
+    if (installed.length === 0) {
+      lines.push('No GitHub plugin installed yet.');
+    } else {
+      lines.push('Installed:');
+      for (const entry of installed) {
+        const size = `${Math.round((entry.bytes || 0) / 1024)} KB`;
+        lines.push(
+          `  ${entry.enabled ? '● enabled ' : '○ disabled'}  ${entry.name.padEnd(18)} github.com/${entry.repo}  (${(entry.files || []).length} file, ${size})`,
+        );
+        lines.push(`                /${entry.name} ${entry.enabled ? 'disable' : 'enable'}`);
+      }
+    }
+    const installedNames = new Set(installed.map((entry) => entry.name));
+    const available = DEFAULT_PLUGINS.filter((entry) => !installedNames.has(entry.name));
+    if (available.length > 0) {
+      lines.push('', 'Default catalog (install by name):');
+      for (const entry of available) lines.push(`  ${entry.name.padEnd(18)} ${entry.repo} — ${entry.description}`);
+    }
+    lines.push('', 'Any other repository: /plugin install https://github.com/<owner>/<repo>');
+    return lines.join('\n');
+  };
+
+  define(
+    'plugin',
+    'GitHub guidance plugins: list | install <link|name> | uninstall <name> | enable <name> | disable <name>',
+    '/plugin [list|install <link|name>|uninstall <name>|enable <name>|disable <name>]',
+    async (args = '') => {
+      const parts = tokenize(args);
+      const sub = (parts[0] || 'list').toLowerCase();
+      const workspace = pluginWorkspace();
+      if (sub === 'list' || sub === 'status') return print(await pluginListText());
+
+      if (sub === 'install') {
+        const source = parts.slice(1).join(' ');
+        if (!source) {
+          return print('Usage: /plugin install <link|name>, e.g. /plugin install anti-slop');
+        }
+        const target = parsePluginSource(source);
+        if (commands.has(target.name)) {
+          return print(
+            `Cannot install as "${target.name}": /${target.name} is already a built-in command. Pick a repository with a different name.`,
+          );
+        }
+        print(`Installing ${target.name} from github.com/${target.repo} …`);
+        const entry = await installPlugin({ workspace, source });
+        return print(
+          [
+            `Installed ${entry.name} → ${entry.dir}`,
+            `  ${entry.files.length} guidance file(s) · ${Math.round(entry.bytes / 1024)} KB · disabled`,
+            `Enable it for the next task: /${entry.name} enable`,
+          ].join('\n'),
+        );
+      }
+
+      if (sub === 'uninstall' || sub === 'remove') {
+        const name = parts[1];
+        if (!name) return print('Usage: /plugin uninstall <name>');
+        const entry = await uninstallPlugin({ workspace, name });
+        return print(`Removed plugin ${entry.name} (github.com/${entry.repo}).`);
+      }
+
+      if (sub === 'enable' || sub === 'disable') {
+        const name = parts[1];
+        if (!name) return print(`Usage: /plugin ${sub} <name>`);
+        const entry = await setPluginEnabled({ workspace, name, enabled: sub === 'enable' });
+        return print(
+          entry.enabled
+            ? `Plugin ${entry.name} enabled. Its guidance is added to the next task.`
+            : `Plugin ${entry.name} disabled. Its guidance is no longer added.`,
+        );
+      }
+
+      return print(`Unknown /plugin subcommand: ${sub}. Try /plugin list.`);
+    },
+    [
+      '  Plugin adalah paket panduan Markdown dari GitHub — tidak ada kode yang dijalankan.',
+      '  /plugin list                 plugin terpasang + katalog bawaan',
+      '  /plugin install <link|name>  ambil file panduan dari repository publik',
+      '  /plugin uninstall <name>     hapus folder plugin dan catatannya',
+      '  /<name> enable|disable       pakai atau hentikan panduannya di task berikutnya',
+    ].join('\n'),
+  );
+
+  /** `/<name> enable|disable` untuk plugin yang terpasang (bukan command inti). */
+  async function runPluginCommand(parsed) {
+    const workspace = pluginWorkspace();
+    const entry = await getPlugin(workspace, parsed.name);
+    if (!entry) return false;
+    const sub = (parsed.parts[0] || '').toLowerCase();
+    if (sub === 'enable' || sub === 'disable') {
+      const updated = await setPluginEnabled({ workspace, name: entry.name, enabled: sub === 'enable' });
+      print(
+        updated.enabled
+          ? `Plugin ${updated.name} enabled. Its guidance is added to the next task.`
+          : `Plugin ${updated.name} disabled. Its guidance is no longer added.`,
+      );
+      return true;
+    }
+    print(
+      [
+        `/${entry.name} — guidance plugin from github.com/${entry.repo} (${entry.enabled ? 'enabled' : 'disabled'})`,
+        `  /${entry.name} ${entry.enabled ? 'disable' : 'enable'}`,
+        `  ${(entry.files || []).length} file(s) · ${Math.round((entry.bytes || 0) / 1024)} KB · /plugin list to manage packs`,
+      ].join('\n'),
+    );
+    return true;
+  }
+
   define('config', 'Show effective configuration (secrets redacted)', '/config', async () => {
     const described = describeConfig(config);
     const width = Math.max(...Object.keys(described).map((key) => key.length));
@@ -1260,6 +1391,20 @@ export function createCommands(state) {
     async execute(parsed) {
       const command = commands.get(parsed.name);
       if (!command) {
+        if (await runPluginCommand(parsed)) return;
+        // Nama dari katalog bawaan tapi belum dipasang: beri langkah berikutnya,
+        // bukan "unknown command" yang menyiratkan plugin tidak ada.
+        if (catalogEntry(parsed.name)) {
+          print(
+            `Plugin ${parsed.name} is not installed yet. Run /plugin install ${parsed.name}, then /${parsed.name} enable.`,
+          );
+          return;
+        }
+        // Kata kerja plugin tanpa nama: tunjukkan bentuk yang benar.
+        if (['enable', 'disable', 'install', 'uninstall'].includes(parsed.name)) {
+          print(`Use /plugin ${parsed.name} <name>, or /<name> ${parsed.name} once the plugin is installed. See /plugin list.`);
+          return;
+        }
         print(`Unknown command: /${parsed.name}. Run /help.`);
         return;
       }

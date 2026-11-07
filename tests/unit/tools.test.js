@@ -108,6 +108,70 @@ test('read_file streams a line range from a file above the size limit', async ()
   }
 });
 
+// Smallest valid PNG: the signature is what read_file checks before attaching.
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AL+2wAAAABJRU5ErkJggg==';
+
+test('read_file returns PNG, JPEG, GIF and WebP images as a data URL', async () => {
+  const env = await setup();
+  try {
+    await fsp.mkdir(path.join(env.fixture.root, 'assets'), { recursive: true });
+    const cases = [
+      ['logo.png', Buffer.from(PNG_1X1, 'base64'), 'image/png'],
+      ['photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]), 'image/jpeg'],
+      ['anim.gif', Buffer.from('GIF89a\u0001\u0000\u0001\u0000\u0000\u0000\u003b', 'latin1'), 'image/gif'],
+      ['photo.webp', Buffer.from(`RIFF\u0024\u0000\u0000\u0000WEBPVP8 `, 'latin1'), 'image/webp'],
+    ];
+    for (const [file, bytes, mime] of cases) {
+      const rel = `assets/${file}`;
+      await fsp.writeFile(path.join(env.fixture.root, rel), bytes);
+      const { result } = await env.registry.execute('read_file', { path: rel }, env.ctx);
+      assert.equal(result.kind, 'image', rel);
+      assert.equal(result.mime, mime, rel);
+      assert.equal(result.path, rel);
+      assert.equal(result.size, bytes.length);
+      assert.equal(result.image_data_url, `data:${mime};base64,${bytes.toString('base64')}`);
+    }
+
+    // Line ranges are a text concept; an image ask must be refused, not ignored.
+    await assert.rejects(
+      env.registry.execute('read_file', { path: 'assets/logo.png', start_line: 1 }, env.ctx),
+      /read as an image/,
+    );
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test('read_file refuses an image extension whose content is not that image', async () => {
+  const env = await setup();
+  try {
+    await fsp.writeFile(path.join(env.fixture.root, 'assets/fake.png'), 'not really a png\n');
+    await assert.rejects(
+      env.registry.execute('read_file', { path: 'assets/fake.png' }, env.ctx),
+      /named like image\/png but its content is not/,
+    );
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test('read_file still refuses other binary files and reads SVG as text', async () => {
+  const env = await setup();
+  try {
+    await assert.rejects(
+      env.registry.execute('read_file', { path: 'assets/logo.bin' }, env.ctx),
+      /binary, not text/,
+    );
+    // SVG is XML, so it stays a text read instead of becoming an image.
+    await fsp.writeFile(path.join(env.fixture.root, 'assets/icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
+    const { result } = await env.registry.execute('read_file', { path: 'assets/icon.svg' }, env.ctx);
+    assert.match(result.text, /<svg/);
+    assert.equal(result.image_data_url, undefined);
+  } finally {
+    await env.cleanup();
+  }
+});
+
 test('edit_file applies a unique replacement, previews a diff and refuses ambiguous matches', async () => {
   const env = await setup({});
   try {

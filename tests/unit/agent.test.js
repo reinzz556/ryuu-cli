@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { Agent } from '../../src/agent/agent.js';
 import { ApprovalManager } from '../../src/agent/approvals.js';
 import { ProcessManager } from '../../src/services/processes.js';
@@ -1055,6 +1057,72 @@ test('tool events carry the plugin name so the CLI can colour plugin tools', asy
       }
     })();
     assert.equal(builtIn, null, 'a built-in tool carries no plugin');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AL+2wAAAABJRU5ErkJggg==';
+
+async function writePngFixture(root) {
+  const bytes = Buffer.from(PNG_1X1, 'base64');
+  await fsp.mkdir(path.join(root, 'assets'), { recursive: true });
+  await fsp.writeFile(path.join(root, 'assets/logo.png'), bytes);
+  return bytes;
+}
+
+test('read_file attaches a PNG to the conversation for a multimodal provider', async () => {
+  const ctx = await setup({
+    responses: [
+      response({ toolCalls: [toolCall('read_file', { path: 'assets/logo.png' })] }),
+      response({ content: 'The image is a single dark pixel.' }),
+    ],
+  });
+  try {
+    ctx.provider.capabilities = { multimodal: true };
+    await writePngFixture(ctx.fixture.root);
+    const summary = await ctx.agent.run('describe assets/logo.png');
+    assert.equal(summary.status, 'completed');
+
+    const messages = ctx.provider.calls[1].messages;
+    const toolMessage = messages.find((message) => message.role === 'tool');
+    assert.ok(!toolMessage.content.includes('base64'), 'base64 never enters the tool message');
+    assert.match(toolMessage.content, /The image is attached/);
+
+    const imageTurn = messages.find((message) => message.role === 'user' && Array.isArray(message.content));
+    assert.ok(imageTurn, 'the picture travels as its own content-part turn');
+    assert.equal(imageTurn.content[0].type, 'text');
+    assert.equal(imageTurn.content[1].type, 'image_url');
+    assert.equal(imageTurn.content[1].image_url.url, `data:image/png;base64,${PNG_1X1}`);
+
+    const saved = await ctx.sessionStore.load(summary.sessionId);
+    assert.ok(!JSON.stringify(saved).includes('base64'), 'the saved session keeps no image bytes');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test('read_file says an image was not attached when the provider has no image input', async () => {
+  const ctx = await setup({
+    responses: [
+      response({ toolCalls: [toolCall('read_file', { path: 'assets/logo.png' })] }),
+      response({ content: 'I cannot see images with this model.' }),
+    ],
+  });
+  try {
+    await writePngFixture(ctx.fixture.root);
+    const summary = await ctx.agent.run('describe assets/logo.png');
+    assert.equal(summary.status, 'completed');
+
+    const messages = ctx.provider.calls[1].messages;
+    const toolMessage = messages.find((message) => message.role === 'tool');
+    assert.match(toolMessage.content, /NOT attached/);
+    assert.match(toolMessage.content, /does not accept image input/);
+    assert.equal(
+      messages.some((message) => message.role === 'user' && Array.isArray(message.content)),
+      false,
+      'no image part is sent to a text-only provider',
+    );
   } finally {
     await ctx.cleanup();
   }

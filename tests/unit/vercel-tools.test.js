@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createVercelTools } from '../../plugins/vercel/tools.js';
+import { createVercelTools } from '../../src/tools/advance/vercel/tools.js';
 
 function fakeApi(handlers = {}) {
     const calls = [];

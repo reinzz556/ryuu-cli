@@ -52,7 +52,8 @@ test('persisted sessions redact secrets and bound content', async () => {
   await withStore(async ({ store, dir }) => {
     const session = createSessionRecord({ task: 'use nvapi-secretkey123456 to call the API', model: 'm', workspace: '/w' });
     session.transcript = [
-      { role: 'tool', name: 'run_command', ok: true, content: 'Authorization: Bearer abcdefghijklmnop and api_key=hunter2' },
+      { role: 'assistant', kind: 'plan', content: '1. read the config' },
+      { role: 'tool', name: 'run_command', ok: true, durationMs: 12, content: 'Authorization: Bearer abcdefghijklmnop and api_key=hunter2' },
     ];
     session.commands = [{ argv: ['echo', 'nvapi-anotherkey12345'], output: 'token=supersecret' }];
     session.issues = ['failed with nvapi-thirdkey123456'];
@@ -77,6 +78,10 @@ test('persisted sessions redact secrets and bound content', async () => {
     assert.equal(parsed.conversation.length, 2);
     assert.equal(parsed.conversation[0].role, 'user');
     assert.equal(parsed.conversation[1].role, 'assistant');
+    // The transcript keeps enough shape for /resume to redraw the conversation.
+    assert.equal(parsed.transcript[0].kind, 'plan');
+    assert.equal(parsed.transcript[1].name, 'run_command');
+    assert.equal(parsed.transcript[1].durationMs, 12);
   });
 });
 

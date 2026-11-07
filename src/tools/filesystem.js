@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { defineTool } from './registry.js';
 import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { ToolError } from '../utils/errors.js';
@@ -12,6 +13,26 @@ const objectSchema = (properties, required = []) => ({
 });
 
 const MAX_WRITE_CHARS = 1_000_000;
+
+// An image is sent to the model verbatim, so only the four formats every
+// OpenAI-compatible vision endpoint accepts are read as images. The extension
+// picks the format and the magic bytes confirm it: a text file renamed to .png
+// must not be passed off as a picture.
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const RIFF = 'RIFF';
+
+function startsWithBytes(buffer, bytes) {
+  if (buffer.length < bytes.length) return false;
+  return bytes.every((byte, index) => buffer[index] === byte);
+}
+
+const IMAGE_FORMATS = new Map([
+  ['.png', { mime: 'image/png', matches: (buffer) => startsWithBytes(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }],
+  ['.jpg', { mime: 'image/jpeg', matches: (buffer) => startsWithBytes(buffer, [0xff, 0xd8, 0xff]) }],
+  ['.jpeg', { mime: 'image/jpeg', matches: (buffer) => startsWithBytes(buffer, [0xff, 0xd8, 0xff]) }],
+  ['.gif', { mime: 'image/gif', matches: (buffer) => buffer.subarray(0, 6).toString('latin1') === 'GIF87a' || buffer.subarray(0, 6).toString('latin1') === 'GIF89a' }],
+  ['.webp', { mime: 'image/webp', matches: (buffer) => buffer.subarray(0, 4).toString('latin1') === RIFF && buffer.subarray(8, 12).toString('latin1') === 'WEBP' }],
+]);
 
 function assertContentSize(content) {
   if (content.length > MAX_WRITE_CHARS) {
@@ -100,7 +121,7 @@ export function createFilesystemTools({ workspace, config }) {
     defineTool({
       name: 'read_file',
       description:
-        'Read a UTF-8 text file from the workspace. Refuses secret files, binary files, and invalid encodings. A full read refuses files above the configured size limit; with start_line/end_line the requested range is streamed, so it also works for files above that limit.',
+        'Read a file from the workspace. Text files are returned as UTF-8, with optional line ranges. PNG, JPEG, GIF and WebP images are attached to the conversation as a real image you can look at, so screenshots, diagrams and UI mockups can be described from what they show. Refuses secret files, other binary files, and invalid encodings. A full text read refuses files above the configured size limit; with start_line/end_line the requested range is streamed, so it also works for files above that limit.',
       risk: 'read',
       schema: objectSchema({
         path: pathSchema,
@@ -109,6 +130,28 @@ export function createFilesystemTools({ workspace, config }) {
         max_bytes: { type: 'integer', minimum: 1, maximum: 5 * 1024 * 1024, description: 'Per-call read/output limit.' },
       }, ['path']),
       handler: async (args) => {
+        const imageFormat = IMAGE_FORMATS.get(extname(args.path).toLowerCase());
+        if (imageFormat) {
+          if (args.start_line !== undefined || args.end_line !== undefined) {
+            throw new ToolError(`${imageFormat.mime} is read as an image; start_line/end_line do not apply.`);
+          }
+          const imageMaxBytes = Math.min(args.max_bytes ?? MAX_IMAGE_BYTES, MAX_IMAGE_BYTES);
+          const file = await workspace.readBinary(args.path, { maxBytes: imageMaxBytes });
+          if (!imageFormat.matches(file.buffer)) {
+            throw new ToolError(`File is named like ${imageFormat.mime} but its content is not: ${file.relPath}`);
+          }
+          return {
+            path: file.relPath,
+            kind: 'image',
+            mime: imageFormat.mime,
+            size: file.size,
+            mtime_ms: file.mtimeMs,
+            // The agent moves this out of the tool result and attaches it as an
+            // image content part; it never reaches the transcript or a log.
+            image_data_url: `data:${imageFormat.mime};base64,${file.base64}`,
+          };
+        }
+
         const maxBytes = Math.min(args.max_bytes ?? config.maxFileBytes, config.maxFileBytes);
         const startLine = args.start_line ?? 1;
         const endLine = args.end_line ?? null;

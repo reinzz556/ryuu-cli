@@ -403,3 +403,38 @@ test('unknown slash commands point back to /help', async () => {
     await cleanup();
   }
 });
+
+test('/resume redraws the saved transcript when the interface can repaint it', async () => {
+  const painted = [];
+  const { commands, renderer, cleanup } = await makeCommands({
+    getAgent: () => ({ setConversation() {} }),
+    sessionStore: {
+      list: async () => [],
+      load: async () => ({
+        conversation: [
+          { role: 'user', content: 'rename the greeting' },
+          { role: 'assistant', content: 'done' },
+        ],
+        transcript: [
+          { role: 'user', content: 'rename the greeting' },
+          { role: 'assistant', content: 'done' },
+        ],
+        worklog: null,
+      }),
+    },
+    restoreHistory: (payload) => {
+      painted.push(payload);
+      return payload.entries.length;
+    },
+  });
+  try {
+    await commands.execute({ name: 'resume', args: '20260101-abc123', parts: ['20260101-abc123'] });
+    assert.match(renderer.text, /Resumed 2 message\(s\) from session 20260101-abc123/);
+    assert.equal(painted.length, 1);
+    assert.equal(painted[0].id, '20260101-abc123');
+    assert.equal(painted[0].entries.length, 2);
+    assert.doesNotMatch(renderer.text, /The next task will be answered with that context/);
+  } finally {
+    await cleanup();
+  }
+});

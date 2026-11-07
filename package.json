@@ -1,6 +1,6 @@
 {
   "name": "@ryuu-reinzz/ryuu-cli",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Ryuu Agent CLI - an autonomous, approval-gated AI coding agent for your terminal",
   "type": "module",
   "bin": {
@@ -12,7 +12,6 @@
   },
   "files": [
     "src",
-    "plugins",
     "docs",
     "README.md",
     "CHANGELOG.md"

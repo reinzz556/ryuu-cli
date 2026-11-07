@@ -7,7 +7,8 @@ import { UndoManager } from '../services/undo.js';
 import { createLogger } from '../services/logger.js';
 import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
-import { loadPlugins, syncPluginTools } from '../../plugins/index.js';
+import { readGuidance } from '../plugins/store.js';
+import { loadPlugins, syncPluginTools } from '../tools/advance/index.js';
 import { createActiveProvider, selectionFor } from '../providers/index.js';
 import { buildProviders, parseExtraProviders, PROVIDER_REQUEST_FIELDS } from '../providers/catalog.js';
 import { buildRawConfig } from '../config/load.js';
@@ -111,7 +112,7 @@ export async function createApp({
   const provider = injectedProvider || createActiveProvider(config, { logger });
   if (!provider.config) provider.config = config;
   provider.processes = processes;
-  // Optional integrations live in plugins/ and attach their tools to the same
+  // Optional integrations live in src/tools/advance/ and attach their tools to the same
   // registry. A plugin whose state forbids it (disabled / not logged in) leaves
   // the registry untouched, so the model is never offered a tool that cannot run.
   const plugins = loadPlugins({ logger, workspace, config });
@@ -222,6 +223,7 @@ export async function createApp({
     sessionStore,
     undo,
     processes,
+    pluginGuidance: () => readGuidance({ workspace: config.workspace, logger }),
   });
 
   async function getProjectSummary({ force = false } = {}) {
@@ -358,6 +360,9 @@ export async function createApp({
     },
     confirmLocal,
     showCode: typeof renderer.showCode === 'function' ? (block) => renderer.showCode(block) : null,
+    // Only the retained-mode TUI has a transcript that can be repainted; the
+    // line interface keeps its history in the terminal's own scrollback.
+    restoreHistory: tui ? (payload) => tui.restoreHistory(payload) : null,
   };
 
   const commands = createCommands(state);

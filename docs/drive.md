@@ -1,6 +1,6 @@
 # Google Drive Integration (plugin)
 
-Integrasi Google Drive untuk Ryuu CLI. Plugin ini tinggal di `agents/ryuu/plugins/google-drive/`
+Integrasi Google Drive untuk Ryuu CLI. Plugin ini tinggal di `src/tools/advance/google-drive/`
 dan terhubung ke arsitektur yang sudah ada: tool registry (`src/tools/registry.js`),
 command parser (`src/cli/commands.js`), dan approval manager (`src/agent/approvals.js`).
 
@@ -34,7 +34,7 @@ Nama internal: `google-drive` · Command: `/drive` · Dependency: `googleapis`
 ## 3. Arsitektur
 
 ```
-plugins/
+src/tools/advance/
 ├── index.js                  host: loadPlugins, syncPluginTools, unregisterPluginTools
 └── google-drive/
     ├── index.js              deskriptor plugin + factory
@@ -119,7 +119,7 @@ config, maupun environment variable yang dapat mengubahnya.
 Route CLI dilindungi kunci **khusus login Drive**: header `x-ryuu-drive-auth`,
 nilai turunan HMAC-SHA256 dari 32 byte yang tertanam di
 `website/api/lib/drive-login-key.js` (server) dan
-`plugins/google-drive/secret.js` (CLI). Bahan disimpan sebagai empat potongan
+`src/tools/advance/google-drive/secret.js` (CLI). Bahan disimpan sebagai empat potongan
 ter-XOR, dan yang dikirim ke jaringan adalah turunannya — bukan bahan itu.
 
 Tidak ada yang perlu diisi pengguna dan tidak ada command untuk mengubahnya.

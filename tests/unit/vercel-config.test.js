@@ -13,7 +13,7 @@ import {
     validateConfigEntry,
     vercelPaths,
     writeVercelConfig,
-} from '../../plugins/vercel/config.js';
+} from '../../src/tools/advance/vercel/config.js';
 import { tempDir } from './helpers.js';
 
 test('config paths follow the OS and RYUU_CONFIG_DIR', async () => {

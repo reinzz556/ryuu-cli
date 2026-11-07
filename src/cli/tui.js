@@ -400,6 +400,68 @@ export class Transcript {
   }
 }
 
+/** One flat, bounded line for a restored tool row. */
+function toolPreview(text, limit = 100) {
+  const raw = String(text ?? '').trim();
+  let summary = '';
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    try {
+      const data = JSON.parse(raw);
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        const pick = [data.summary, data.message, data.path, data.command, data.error].find(
+          (value) => typeof value === 'string' && value.trim(),
+        );
+        if (pick) summary = pick;
+      }
+    } catch {
+      // A truncated or non-JSON tool result falls back to its own text.
+    }
+  }
+  const flat = (summary || raw).replace(/\s+/g, ' ').trim();
+  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+}
+
+/**
+ * Turn saved session transcript entries into TUI transcript blocks. `/resume`
+ * uses this so the previous conversation is drawn again in the frame (and can
+ * be scrolled), instead of living only inside the agent's memory.
+ */
+export function historyBlocks(entries = []) {
+  const blocks = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const text = String(entry.content ?? '').trim();
+    if (!text) continue;
+    if (entry.role === 'user') {
+      blocks.push({ kind: 'task', text, meta: 'restored' });
+      continue;
+    }
+    if (entry.role === 'assistant') {
+      if (entry.kind === 'plan') {
+        const steps = text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, 12);
+        if (steps.length > 0) blocks.push({ kind: 'plan', steps });
+      } else {
+        blocks.push({ kind: 'answer', text });
+      }
+      continue;
+    }
+    if (entry.role === 'tool') {
+      blocks.push({
+        kind: 'tool',
+        name: String(entry.name || 'tool'),
+        ok: entry.ok !== false,
+        durationMs: Number(entry.durationMs) || 0,
+        summary: toolPreview(entry.content),
+      });
+    }
+  }
+  return blocks;
+}
+
 function exitLabel(item) {
   if (Number.isInteger(item.exitCode)) return `exit ${item.exitCode}`;
   if (item.timedOut) return 'timed out';
@@ -920,6 +982,32 @@ export class Tui {
   info(message) {
     this.transcript.message(` ${this.paint('sky', '◇')} ${this.paint('white', message)}`);
     this.requestRender();
+  }
+
+  /**
+   * Repaint a saved session's conversation in the frame. Restored blocks are
+   * ordinary transcript items, so they can be scrolled, collapsed and copied
+   * exactly like blocks produced during this run.
+   */
+  restoreHistory({ id = '', entries = [] } = {}) {
+    const blocks = historyBlocks(entries);
+    if (blocks.length === 0) return 0;
+    const tasks = blocks.filter((block) => block.kind === 'task').length;
+    this.transcript.message(
+      ` ${this.paint('sky', '↺')} ${this.paint('white', `restored session ${id}`)} ${this.paint(
+        'gray',
+        `· ${blocks.length} block(s), ${tasks} task(s) · PgUp or the mouse wheel scrolls back`,
+      )}`,
+    );
+    for (const block of blocks) {
+      if (block.kind === 'task') this.transcript.task(block.text, block.meta);
+      else if (block.kind === 'plan') this.transcript.plan(block.steps);
+      else this.transcript.add({ ...block, version: 0 });
+    }
+    // Jump to the newest row: the restored tail is what the next task continues.
+    this.scroll = 0;
+    this.requestRender();
+    return blocks.length;
   }
 
   success(message) {

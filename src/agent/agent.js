@@ -15,7 +15,32 @@ const CHANGE_TOOLS = new Set(['write_file', 'edit_file', 'create_file', 'move_fi
 /** How many times an identical failing call may be repeated before it is blocked. */
 const MAX_REPEATED_FAILURES = 2;
 
+/**
+ * Images are resent with every later request in the same task, so a task is
+ * capped: a long screenshot loop would otherwise grow the prompt without bound.
+ */
+const MAX_IMAGES_PER_TASK = 8;
+
 const nowIso = () => new Date().toISOString();
+
+/**
+ * Lift an image payload out of a tool result.
+ *
+ * A `tool` message may only carry text, so the base64 has to travel as a
+ * separate content part. Removing it here keeps the transcript, the logs and
+ * the truncation budget free of megabytes of base64.
+ */
+function takeImages(payload) {
+  const result = payload?.result;
+  if (!result || typeof result !== 'object' || typeof result.image_data_url !== 'string') return [];
+  const image = {
+    path: result.path || 'image',
+    mime: result.mime || 'image/png',
+    dataUrl: result.image_data_url,
+  };
+  delete result.image_data_url;
+  return [image];
+}
 
 const WRITE_TOOLS = new Set(['create_file', 'write_file', 'edit_file', 'move_file', 'delete_file']);
 
@@ -183,6 +208,7 @@ export class Agent {
     undo = null,
     projectSummary = null,
     processes = null,
+    pluginGuidance = null,
   }) {
     if (!provider) throw new Error('Agent requires a provider.');
     if (!registry) throw new Error('Agent requires a tool registry.');
@@ -198,6 +224,9 @@ export class Agent {
     this.undo = undo;
     this.projectSummary = projectSummary;
     this.processes = processes;
+    // Reads the guidance of the enabled GitHub plugins. Called once per task, so
+    // enabling a plugin takes effect on the next task without a restart.
+    this.pluginGuidance = pluginGuidance;
     this.session = null;
     // Conversation memory shared by every task in this process.
     this.conversation = [];
@@ -614,7 +643,40 @@ export class Agent {
     });
   }
 
+  /**
+   * Decide which images of one tool reply may be attached, and record the
+   * verdict in the tool result so the model is told the truth either way.
+   *
+   * Two gates: the provider must declare image input, and the task must have
+   * room left. A model that cannot see the picture is told so explicitly, which
+   * is what stops it from inventing the contents of a screenshot.
+   */
+  #admitImages(session, images) {
+    const supported = this.provider?.capabilities?.multimodal === true;
+    const used = Number(session.imagesAttached) || 0;
+    const room = Math.max(0, MAX_IMAGES_PER_TASK - used);
+    const admitted = supported ? images.slice(0, room) : [];
+    session.imagesAttached = used + admitted.length;
+
+    let note;
+    if (!supported) {
+      note = 'The image was NOT attached: the active provider does not accept image input, so you cannot see it. Say that plainly instead of guessing, or switch to a multimodal model.';
+    } else if (admitted.length === 0) {
+      note = `The image was NOT attached: this task already sent ${MAX_IMAGES_PER_TASK} images. Work from the metadata, or ask the user.`;
+    } else {
+      note = 'The image is attached to the conversation as a picture: describe what it actually shows.';
+    }
+    return { admitted, note };
+  }
+
   #toolReply(messages, call, payload, session) {
+    const images = takeImages(payload);
+    let admitted = [];
+    if (images.length > 0) {
+      const decision = this.#admitImages(session, images);
+      admitted = decision.admitted;
+      if (payload.result && typeof payload.result === 'object') payload.result.note = decision.note;
+    }
     const content = this.#truncateResult(payload);
     messages.push({ role: 'tool', tool_call_id: call.id, content });
     session.transcript.push({
@@ -625,6 +687,21 @@ export class Agent {
       at: nowIso(),
     });
     if (session.transcript.length > 200) session.transcript.shift();
+
+    // The picture follows the tool reply as its own user turn: OpenAI-compatible
+    // tool messages are text-only, and the tool call must stay answered first.
+    if (admitted.length > 0) {
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Image returned by ${call.name}: ${admitted.map((image) => `${image.path} (${image.mime})`).join(', ')}`,
+          },
+          ...admitted.map((image) => ({ type: 'image_url', image_url: { url: image.dataUrl } })),
+        ],
+      });
+    }
   }
 
   #buildSummary({ status, finalText, plan, steps, startedAt, session, taskProcesses, error = null }) {
@@ -715,6 +792,8 @@ export class Agent {
     let error = null;
     // One prompt per session, then memory, then a single task brief that
     // carries the task, the budget and every verified fact from earlier work.
+    const pluginGuidance =
+      typeof this.pluginGuidance === 'function' ? await this.pluginGuidance().catch(() => '') : '';
     let messages = [
       { role: 'system', content: await this.#systemPrompt() },
       ...this.conversation.map((entry) => ({ ...entry })),
@@ -724,6 +803,7 @@ export class Agent {
           task: task.trim(),
           worklog: this.worklog,
           budget: this.#budgetText({ stepLimit, deadline }),
+          guidance: pluginGuidance,
         }),
       },
     ];
@@ -850,7 +930,9 @@ export class Agent {
             session.plan = plan;
             this.worklog.recordPlan(plan);
             this.#emit('plan', { plan });
-            session.transcript.push({ role: 'assistant', content: plan, at: nowIso() });
+            // `kind: 'plan'` lets /resume redraw this as a PLAN block instead of
+            // mistaking it for a final answer.
+            session.transcript.push({ role: 'assistant', kind: 'plan', content: plan, at: nowIso() });
           }
         }
 

@@ -43,7 +43,7 @@ export async function buildProjectSummary({ workspace }) {
     summary.hasReadme = listing.entries.some((entry) => /^readme(\.(md|txt|rst))?$/i.test(entry.name));
     summary.hasTests = listing.entries.some((entry) => /^(tests?|__tests__|spec)$/i.test(entry.name));
     // Immediate sub-directories of every top-level directory: the module
-    // layout the model needs to know (e.g. plugins/<category>/<command>).
+    // layout the model needs to know (e.g. src/tools/advance/<integration>/<module>).
     for (const entry of listing.entries) {
       if (entry.kind !== 'dir') continue;
       if (summary.modules.length >= 120) break;

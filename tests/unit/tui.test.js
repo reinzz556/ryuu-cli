@@ -589,3 +589,37 @@ test('a failed plugin tool is still painted red, never sky blue', () => {
     tui.close();
   }
 });
+
+test('/resume repaints the saved conversation as scrollable transcript blocks', () => {
+  const tui = ui();
+  try {
+    const restored = tui.restoreHistory({
+      id: '20260101-abc123',
+      entries: [
+        { role: 'user', content: 'rename the greeting' },
+        { role: 'assistant', kind: 'plan', content: '1. read a.js\n2. edit a.js' },
+        { role: 'tool', name: 'read_file', ok: true, durationMs: 4, content: '{"ok":true,"path":"a.js"}' },
+        { role: 'assistant', content: 'renamed it to hi' },
+      ],
+    });
+    assert.equal(restored, 4);
+    assert.deepEqual(
+      tui.transcript.items.map((item) => item.kind),
+      ['info', 'task', 'plan', 'tool', 'answer'],
+      'the header line comes first, then the saved turns in order',
+    );
+    assert.equal(tui.transcript.items[1].text, 'rename the greeting');
+    assert.deepEqual(tui.transcript.items[2].steps, ['1. read a.js', '2. edit a.js']);
+    assert.equal(tui.transcript.items[3].name, 'read_file');
+    assert.equal(tui.transcript.items[3].summary, 'a.js', 'a tool row keeps a one-line summary');
+
+    const rows = layoutTranscript(tui.transcript, 70, { c, color: false }).map((row) => row.text);
+    const text = stripAnsi(rows.join('\n'));
+    assert.match(text, /restored session 20260101-abc123/);
+    assert.ok(text.indexOf('rename the greeting') < text.indexOf('renamed it to hi'), 'order is preserved');
+
+    assert.equal(tui.restoreHistory({ id: 'x', entries: [] }), 0, 'nothing is drawn for an empty transcript');
+  } finally {
+    tui.close();
+  }
+});

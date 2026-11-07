@@ -3,6 +3,49 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-11-07
+
+### Ditambahkan
+
+- **`read_file` membaca gambar.** `.png`, `.jpg`/`.jpeg`, `.gif`, dan `.webp`
+  dikembalikan sebagai gambar sungguhan dan dilampirkan ke percakapan sebagai
+  content part `image_url`, jadi model bisa benar-benar melihat screenshot,
+  diagram, dan mockup UI. Ekstensi diperiksa bersama magic bytes, sehingga file
+  teks yang diganti nama menjadi `.png` tidak lolos. Batas 4 MB per gambar,
+  maksimum 8 gambar per task, dan hanya dikirim bila provider mendeklarasikan
+  `capabilities.multimodal`; bila tidak, model diberi tahu gambarnya tidak
+  terlampir. Base64 tidak pernah masuk ke tool message, transcript, atau sesi.
+- **Plugin panduan dari GitHub.** `/plugin install <link|name>` mengambil file
+  Markdown dari repository publik ke `.ryuu/plugins/<nama>/`, `/plugin uninstall`
+  menghapusnya, dan setiap plugin terpasang mendapat command sendiri:
+  `/<nama> enable|disable`. Hanya file `.md`/`.markdown`/`.mdx`/`.txt` yang
+  diambil (maks. 24 file / 2 MB) lewat satu permintaan GitHub API plus
+  `raw.githubusercontent.com`, jadi repo besar tidak diunduh utuh. Panduan yang
+  aktif disisipkan ke task brief (maks. 7.000 karakter) sebagai referensi gaya
+  pihak ketiga, bukan instruksi baru; tidak ada kode dari repo yang dijalankan.
+  Tujuh repo bawaan: `anti-slop`, `impeccable`, `taste-skill`, `stop-slop`,
+  `humanizer`, `no-ai-slop`, dan `avoid-ai-writing`.
+
+### Diubah
+
+- **`/resume` menggambar ulang riwayat di `--tui`.** Sebelumnya sesi tersimpan
+  hanya memulihkan memori agent, sehingga layar tetap kosong dan pengguna tidak
+  bisa membaca apa yang sudah terjadi. Kini transkrip tersimpan (task, rencana,
+  ringkasan tool, jawaban) dipulihkan sebagai blok transcript biasa — bisa
+  di-scroll, dilipat, dan disalin seperti blok hasil run saat ini. Transkrip
+  sesi menyimpan `kind` dan durasi tool agar rencana tidak tampil sebagai
+  jawaban; sesi lama tetap dimuat, hanya tanpanya penanda rencana.
+- **Lokasi plugin berpindah** dari `plugins/` ke `src/tools/advance/`. Integrasi
+  opsional kini berada di dalam pohon `src/`, sehingga ikut pemeriksaan sintaks
+  dan publikasi paket tanpa entri `files` terpisah. Import internal plugin ke
+  `src/` disesuaikan kedalamannya; tidak ada perubahan perilaku.
+
+### Dokumentasi
+
+- **README** memakai preview banner welcome terbaru (logo "R" dengan gradasi
+  pink → biru langit beserta identitas sesi), menggantikan kotak ASCII lama yang
+  masih menampilkan versi 0.3.1, dan versi project di bagian batasan diperbarui.
+
 ## [0.6.0] - 2026-11-04
 
 Rilis ini menambahkan integrasi Vercel berbasis **OAuth Integration** (bukan

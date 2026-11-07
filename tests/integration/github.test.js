@@ -6,10 +6,10 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 
-import { createGitHubPlugin } from '../../plugins/github/manager.js';
-import { createGitHubCommand } from '../../plugins/github/command.js';
-import { loadCredentials } from '../../plugins/github/credentials.js';
-import { syncPluginTools, unregisterPluginTools } from '../../plugins/index.js';
+import { createGitHubPlugin } from '../../src/tools/advance/github/manager.js';
+import { createGitHubCommand } from '../../src/tools/advance/github/command.js';
+import { loadCredentials } from '../../src/tools/advance/github/credentials.js';
+import { syncPluginTools, unregisterPluginTools } from '../../src/tools/advance/index.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 
 const CLI_TOKEN = `ghcli_${'c'.repeat(43)}`;

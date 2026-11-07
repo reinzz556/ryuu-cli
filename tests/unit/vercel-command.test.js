@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createVercelCommand, formatStatus } from '../../plugins/vercel/command.js';
+import { createVercelCommand, formatStatus } from '../../src/tools/advance/vercel/command.js';
 import { ConfigError } from '../../src/utils/errors.js';
 
 function fakeApi() {
