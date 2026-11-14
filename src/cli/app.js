@@ -9,6 +9,7 @@ import { buildProjectSummary } from '../tools/project.js';
 import { buildToolRegistry } from '../tools/index.js';
 import { readGuidance } from '../plugins/store.js';
 import { loadPlugins, syncPluginTools } from '../tools/advance/index.js';
+import { createMcpManager } from '../mcp/index.js';
 import { createActiveProvider, selectionFor } from '../providers/index.js';
 import { buildProviders, parseExtraProviders, PROVIDER_REQUEST_FIELDS } from '../providers/catalog.js';
 import { buildRawConfig } from '../config/load.js';
@@ -60,6 +61,10 @@ export async function createApp({
   registry: injectedRegistry = null,
   renderer: injectedRenderer = null,
   webManager: injectedWebManager = null,
+  // MCP is user-global (~/.config/ryuu/mcp). `mcp.dir` isolates it (tests),
+  // `mcp: false` disables the integration, `mcp.autostart: false` keeps the
+  // manager available to /mcp without connecting anything at startup.
+  mcp: mcpOptions = null,
   version = readVersion(),
 } = {}) {
   const interactive = cliOptions.interactive ?? Boolean(input.isTTY && stdout.isTTY);
@@ -121,6 +126,41 @@ export async function createApp({
     await syncPluginTools(plugin, registry).catch((error) => {
       logger.warn('plugin tools not registered', { plugin: plugin.name, error: error.message });
     });
+  }
+  // MCP servers are an additional integration, never a replacement for the
+  // built-in tools or the native plugins: they register into the same registry.
+  const mcpManager =
+    mcpOptions === false
+      ? null
+      : createMcpManager({
+          registry,
+          logger,
+          dir: mcpOptions?.dir || null,
+          interactive,
+        });
+  const mcpAutostart =
+    mcpOptions?.autostart !== undefined ? Boolean(mcpOptions.autostart) : process.env.RYUU_MCP_AUTOSTART !== '0';
+  let mcpStartup = null;
+  if (mcpManager) {
+    if (mcpAutostart) {
+      // A third-party server that hangs must not delay the prompt for its full
+      // connection timeout: start in the background and give it a short head
+      // start. Servers that finish later still register their tools.
+      const started = mcpManager.start();
+      mcpStartup = await Promise.race([
+        started,
+        new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(null), 5000);
+          timer.unref?.();
+        }),
+      ]);
+      if (!mcpStartup) {
+        logger.info('MCP servers are still connecting in the background');
+        started.catch((error) => logger.warn('MCP startup failed', { error: error.message }));
+      }
+    } else {
+      logger.info('MCP autostart is disabled; /mcp connect starts a server manually');
+    }
   }
   const projectCache = new ProjectSummaryCache({ file: path.join(config.cacheDir, 'project-summary.json') });
 
@@ -343,8 +383,10 @@ export async function createApp({
     provider,
     approvals,
     webSearch: registry.webSearchManager || injectedWebManager || null,
+    mcp: mcpManager,
     plugins,
     getPlugin: (name) => plugins.find((plugin) => plugin.name === name) || null,
+    askLocal: (question) => (prompts && typeof prompts.ask === 'function' ? prompts.ask(question) : null),
     syncPluginTools: (plugin) => syncPluginTools(plugin, registry),
     interactive,
     getAgent: () => agent,
@@ -458,6 +500,8 @@ export async function createApp({
     const stopped = await processes.stopAll({ graceMs: 1500 }).catch(() => 0);
     if (stopped > 0) logger.info('stopped processes on exit', { count: stopped });
     await registry.webSearchManager?.close?.().catch(() => {});
+    // Every MCP connection and its child process is closed before Ryuu exits.
+    await mcpManager?.close?.().catch(() => {});
     logger.info('session closed');
   }
 
@@ -471,6 +515,7 @@ export async function createApp({
     undo,
     approvals,
     webSearch: registry.webSearchManager || injectedWebManager || null,
+    mcp: mcpManager,
     plugins,
     renderer,
     logger,

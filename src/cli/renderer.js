@@ -3,7 +3,7 @@ import { bannerHint, bannerLines } from './banner.js';
 import { renderInline, renderMarkdown } from './markdown.js';
 import { ANSI_SEQUENCE, charWidth, displayWidth } from './width.js';
 import { copyToClipboard } from '../services/clipboard.js';
-import { toolDisplayName } from '../utils/tool-display.js';
+import { mcpDisplayName, toolDisplayName } from '../utils/tool-display.js';
 
 const MAX_REASONING_CHARS = 2_000_000;
 const ANSI_AT = /\x1b\[[0-?]*[ -/]*[@-~]/y;
@@ -315,11 +315,21 @@ export class Renderer {
 
   /**
    * Tool name colour: built-ins stay flat blue, plugin tools are sky blue and
-   * bold so an installed integration is visible at a glance.
+   * bold, and MCP tools carry their own identity — `mcp` in yellow, the rest
+   * (`:server:tool`) in sky blue — so a third-party MCP action is never
+   * mistaken for core tooling.
    */
-  #toolName(name, plugin) {
+  #toolName(name, plugin, mcp = null) {
+    if (mcp) {
+      return `${this.c.bold(this.#paint('yellow', 'mcp'))}${this.c.bold(this.c.hex(PALETTE.sky)(`:${mcp.server}:${mcp.tool}`))}`;
+    }
     const text = toolDisplayName(name, plugin);
     return plugin ? this.c.bold(this.c.hex(PALETTE.sky)(text)) : this.c.hex(PALETTE.blue)(text);
+  }
+
+  /** Plain-text tool label (MCP keeps `mcp:<server>:<tool>`). */
+  #toolText(name, plugin, mcp = null) {
+    return mcp ? mcpDisplayName(mcp.server, mcp.tool) : toolDisplayName(name, plugin);
   }
 
   #visibleLength(text) {
@@ -1342,7 +1352,7 @@ export class Renderer {
     }
   }
 
-  toolStart({ name, args, index = 0, total = 0, detail = '', plugin = null }) {
+  toolStart({ name, args, index = 0, total = 0, detail = '', plugin = null, mcp = null }) {
     if (this.reasoning.active) this.reasoningEnd({});
     if (this.answer.active) this.answerEnd();
     // Running a tool is exactly the `working` phase the user asked for.
@@ -1359,15 +1369,15 @@ export class Renderer {
     }
     if (argsPreview.length > 160) argsPreview = `${argsPreview.slice(0, 160)}…`;
     if (this.plain) {
-      this.#write(`  ${this.#icon('→', '>')} ${toolDisplayName(name, plugin)} ${this.c.dim(argsPreview)}`);
+      this.#write(`  ${this.#icon('→', '>')} ${this.#toolText(name, plugin, mcp)} ${this.c.dim(argsPreview)}`);
       return;
     }
     this.#write(
-      `  ${this.c.dim('│')} ${this.#paint('violet', '◆')} ${this.#toolName(name, plugin)} ${this.c.dim(this.#fit(argsPreview, this.#innerWidth() - 20))}`,
+      `  ${this.c.dim('│')} ${this.#paint('violet', '◆')} ${this.#toolName(name, plugin, mcp)} ${this.c.dim(this.#fit(argsPreview, this.#innerWidth() - 20))}`,
     );
   }
 
-  toolEnd({ name, ok, durationMs, summary, cached = false, plugin = null }) {
+  toolEnd({ name, ok, durationMs, summary, cached = false, plugin = null, mcp = null }) {
     this.status.tool = '';
     this.status.toolIndex = 0;
     this.status.toolTotal = 0;
@@ -1379,22 +1389,22 @@ export class Renderer {
     const detail = summary ? String(summary).replace(/\s+/g, ' ').slice(0, 220) : '';
     if (cached) {
       if (this.plain) {
-        this.#write(this.c.dim(`  [cached] ${toolDisplayName(name, plugin)} · ${detail}`));
+        this.#write(this.c.dim(`  [cached] ${this.#toolText(name, plugin, mcp)} · ${detail}`));
         return;
       }
-      this.#write(`  ${this.c.dim('│')} ${this.#paint('cyan', '↺')} ${this.#toolName(name, plugin)} ${this.c.dim(`· ${detail}`)}`);
+      this.#write(`  ${this.c.dim('│')} ${this.#paint('cyan', '↺')} ${this.#toolName(name, plugin, mcp)} ${this.c.dim(`· ${detail}`)}`);
       return;
     }
     if (this.plain) {
       const symbol = ok ? this.c.green('[ok]') : this.c.red('[fail]');
       this.#write(
-        `  ${symbol} ${toolDisplayName(name, plugin)}${duration ? this.c.dim(` ${duration}`) : ''}${detail ? this.c.dim(` · ${detail}`) : ''}`,
+        `  ${symbol} ${this.#toolText(name, plugin, mcp)}${duration ? this.c.dim(` ${duration}`) : ''}${detail ? this.c.dim(` · ${detail}`) : ''}`,
       );
       return;
     }
     const symbol = ok ? this.#paint('green', '✓') : this.#paint('red', '✕');
     const stats = [duration, detail].filter(Boolean).join(' · ');
-    const label = ok ? this.#toolName(name, plugin) : this.c.hex(PALETTE.red)(toolDisplayName(name, plugin));
+    const label = ok ? this.#toolName(name, plugin, mcp) : this.c.hex(PALETTE.red)(this.#toolText(name, plugin, mcp));
     this.#write(
       `  ${this.c.dim('│')} ${symbol} ${label}${stats ? ` ${this.c.dim(`· ${stats}`)}` : ''}`,
     );
@@ -1447,6 +1457,40 @@ export class Renderer {
         : 'Tidak ada hasil; agent lanjut tanpa sumber web'
       : 'Tidak ada provider yang berhasil; agent dapat melanjutkan tanpa pencarian web';
     this.#write(`  ${this.c.dim('│')} ${this.c.dim('└─')} ${this.c.dim(footer)}`);
+  }
+
+  /**
+   * Compact MCP connection table, used by `/mcp` and `/mcp status`:
+   *
+   *   ◇ MCP SERVERS · 3 connected · 4 configured
+   *   github        ● Connected      12 tool(s)
+   *   google-drive  ● Connected      4 tool(s)
+   *   vercel        ○ Disconnected
+   *
+   * Only the state symbol is coloured; a long error is already clipped by the
+   * command so the table never wraps the terminal.
+   */
+  mcpServers({ title = 'MCP SERVERS', summary = '', rows = [] } = {}) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (this.plain) {
+      this.#write(`MCP Servers: ${summary}`);
+      for (const row of list) {
+        this.#write(`  ${String(row.name).padEnd(18)} ${row.symbol} ${row.label}${row.detail ? `  ${row.detail}` : ''}`);
+      }
+      return;
+    }
+    const colors = { connected: 'green', connecting: 'amber', disconnected: 'slate', disabled: 'slate', error: 'red' };
+    this.#write(
+      `  ${this.c.dim('│')} ${this.#paint('violet', '◇')} ${this.c.bold(this.#paint('cyan', title))} ${this.c.dim(`· ${summary}`)}`,
+    );
+    for (const row of list) {
+      const color = colors[row.state] || 'slate';
+      const name = this.c.hex(PALETTE.white)(String(row.name).padEnd(18));
+      const symbol = this.#paint(color, row.symbol);
+      const label = row.state === 'error' ? this.#paint('red', row.label) : this.c.dim(row.label);
+      const detail = row.detail ? `  ${this.c.dim(this.#fit(row.detail, Math.max(20, this.#innerWidth() - 40)))}` : '';
+      this.#write(`  ${this.c.dim('│')} ${name} ${symbol} ${label}${detail}`);
+    }
   }
 
   /**
@@ -1503,24 +1547,25 @@ export class Renderer {
     }
   }
 
-  toolDenied({ name, reason, plugin = null }) {
-    const label = toolDisplayName(name, plugin);
+  toolDenied({ name, reason, plugin = null, mcp = null }) {
+    const label = this.#toolText(name, plugin, mcp);
     if (this.plain) {
       this.#write(`  [denied] ${label} ${this.c.dim(`· ${reason}`)}`);
       return;
     }
     this.#write(
-      `  ${this.c.dim('│')} ${this.#paint('amber', '⊘')} ${this.c.hex(PALETTE.blue)(label)} ${this.c.dim(`· ${reason}`)}`,
+      `  ${this.c.dim('│')} ${this.#paint('amber', '⊘')} ${this.#toolName(name, plugin, mcp)} ${this.c.dim(`· ${reason}`)}`,
     );
   }
 
-  approvalRequest({ tool, risk, preview, reasons, critical }) {
+  approvalRequest({ tool, label = null, risk, preview, reasons, critical }) {
+    const name = label || tool;
     // Never leave the activity line running under an interactive y/N prompt.
     this.stopActivity();
     const tone = critical ? 'red' : 'amber';
     if (this.plain) {
       this.#write('');
-      this.#write(`${critical ? '[!]' : '[approval]'} Approval required · ${tool} · risk: ${risk}${critical ? ' · CRITICAL' : ''}`);
+      this.#write(`${critical ? '[!]' : '[approval]'} Approval required · ${name} · risk: ${risk}${critical ? ' · CRITICAL' : ''}`);
       if (reasons?.length) {
         for (const reason of reasons) this.#write(this.c.dim(`  - ${reason}`));
       }
@@ -1535,7 +1580,7 @@ export class Renderer {
     }
 
     this.#write('');
-    this.#write(this.#top(`${critical ? '▲' : '◆'} approval required`, `${tool} · risk: ${risk}`));
+    this.#write(this.#top(`${critical ? '▲' : '◆'} approval required`, `${name} · risk: ${risk}`));
     this.#write(this.#row(`${this.#paint('cyan', 'gate'.padEnd(10))} ${critical ? this.#paint('red', 'CRITICAL') : 'interactive consent'}`));
     if (reasons?.length) {
       for (const reason of reasons) this.#write(this.#row(`${this.#paint('amber', '·')} ${reason}`));

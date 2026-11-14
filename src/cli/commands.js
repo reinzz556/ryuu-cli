@@ -30,6 +30,7 @@ import { formatDoctor, runDoctor } from '../services/doctor.js';
 import { createUnifiedDiff, diffStats } from '../services/diff.js';
 import { PROVIDER_INFO } from '../services/websearch/providers.js';
 import { runUserShell } from '../services/ushell.js';
+import { createMcpCommand } from '../mcp/command.js';
 import { DEFAULT_PLUGINS, catalogEntry, parsePluginSource } from '../plugins/catalog.js';
 import {
   getPlugin,
@@ -1369,6 +1370,24 @@ export function createCommands(state) {
     );
     return true;
   }
+
+  // MCP lives in the same dispatcher as every other command. It is defined even
+  // when the integration is disabled this run, so the help text stays honest.
+  const mcpHandler = createMcpCommand({
+    manager: state.mcp || null,
+    print,
+    ask: state.askLocal || null,
+    confirm: (question) => state.confirmLocal(question),
+    interactive,
+    renderer,
+  });
+  define(
+    'mcp',
+    'Manage MCP servers: add | list | status | connect | tools | resources | prompts | logs',
+    '/mcp [list|status|add|remove|enable|disable|connect|disconnect|restart|reconnect|refresh|test|info|tools|resources|prompts|logs|config|help]',
+    mcpHandler,
+    mcpHandler.help,
+  );
 
   define('config', 'Show effective configuration (secrets redacted)', '/config', async () => {
     const described = describeConfig(config);

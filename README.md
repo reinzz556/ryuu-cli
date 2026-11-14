@@ -8,7 +8,7 @@ kompatibel dengan OpenAI: NVIDIA Integrate API dan Token Harbor sudah tersedia,
 dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 
 ```
-  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.6.1
+  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.7.0
   ██▀▀▀▀██▄  workspace  /path/to/your/project
   ██    ▀██  runtime    Node.js v22.14.0 · Linux
   ██▄▄▄▄██▀  model      minimaxai/minimax-m3.1-flash
@@ -455,6 +455,7 @@ yang dimulai dengan `!` dijalankan sebagai command shell Anda sendiri.
 | `/copy [n]` | Menyalin prompt yang sudah Anda kirim ke clipboard terminal. | `n` menghitung mundur dari yang terbaru (bawaan: yang terakhir). Bekerja di kedua antarmuka; memakai OSC 52. |
 | `/bash <command>` | Menjalankan sendiri command shell di workspace. | Output lengkap; command dan output masuk ke konteks sesi. Sama dengan baris yang dimulai `!`. |
 | `/web [status\|providers\|test\|enable <id>\|disable <id>]` | Status pencarian web multi-provider, daftar kapabilitas, uji koneksi, dan aktif/nonaktif sesi. | `test` hanya memeriksa koneksi dan penemuan tool; tidak menjalankan kueri pencarian. |
+| `/mcp [list\|status\|add\|remove\|enable\|disable\|connect\|disconnect\|restart\|reconnect\|refresh\|test\|info\|tools\|resources\|prompts\|logs\|config]` | Mengelola server MCP: daftar/status, wizard, koneksi, tool, resource, prompt, dan log. | Tool MCP otomatis tersedia untuk model dengan namespace `mcp:<server>:<tool>`, risk level, dan approval gate. Detail: **[docs/mcp.md](docs/mcp.md)**. |
 | `/processes` | Proses yang berjalan dan terbaru. | |
 | `/logs [id]` | Output proses, atau lokasi file log. | |
 | `/expand [block-id]` | Mendaftarkan blok reasoning/`run_command`, atau membuka satu secara penuh. | Bisa juga dengan mengklik blok; `Esc` atau klik lain menutup panel. Blok tetap tersedia sepanjang sesi. |
@@ -906,6 +907,35 @@ enable/disable berlaku pada task berikutnya tanpa restart. Totalnya dibatasi
 7.000 karakter per task dan ditandai sebagai teks pihak ketiga: dipakai sebagai
 referensi gaya, bukan sebagai instruksi baru atau izin melewati aturan agent.
 
+## MCP (Model Context Protocol)
+
+MCP menambahkan tool, resource, dan prompt dari server lain tanpa mengubah tool
+bawaan atau plugin native. Server bersifat global untuk pengguna dan disimpan di
+`<config-dir>/ryuu/mcp/`; rahasia berada di file terpisah dengan permission
+`0600` dan tidak pernah dicetak.
+
+```bash
+/mcp add                  # wizard: stdio/http, command/URL, env/header, auth, uji koneksi
+/mcp status               # ringkasan koneksi
+/mcp tools github         # tool + risk + status approval
+/mcp connect github       # hubungkan (memicu OAuth bila perlu)
+/mcp refresh github       # baca ulang daftar tool/resource/prompt
+/mcp logs github          # log terbaru, sudah disunting
+```
+
+- Transport: **STDIO** dan **Streamable HTTP**, dengan autentikasi none, bearer,
+  atau OAuth (discovery, dynamic registration, PKCE, refresh token).
+- Tool muncul sebagai `mcp:server:tool`: kata `mcp` kuning, sisanya biru langit.
+- Tool yang tidak jelas read-only selalu melewati approval gate; tool destruktif
+  ditandai critical. Anotasi server tidak dapat menurunkan risk.
+- Konfigurasi bertahan setelah restart. `disable` menyimpan konfigurasi dan token;
+  `remove` menghapus konfigurasi, credentials, dan log.
+- Command dan endpoint divalidasi: STDIO dijalankan tanpa shell, URL HTTP melewati
+  guard SSRF, respons dibatasi, dan proses anak dibersihkan saat Ryuu keluar.
+
+Detail lengkap, contoh konfigurasi STDIO/HTTP/OAuth, dan troubleshooting:
+**[docs/mcp.md](docs/mcp.md)**.
+
 ## Model persetujuan dan izin
 
 Kebijakannya diatur dengan `agent.approvalPolicy`:
@@ -1355,7 +1385,7 @@ secara manual di Windows.
 - `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
   JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
   penyederhanaan dari halaman tersebut.
-- Ini project 0.6.1: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+- Ini project 0.7.0: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
 
 ## Daftar periksa validasi API langsung
 

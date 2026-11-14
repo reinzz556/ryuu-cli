@@ -24,7 +24,7 @@ export class ApprovalManager {
     this.stats = { approved: 0, denied: 0, auto: 0 };
   }
 
-  async request({ tool, risk, args = {}, preview = '', reasons = [], critical = false }) {
+  async request({ tool, label = null, risk, args = {}, preview = '', reasons = [], critical = false }) {
     if (risk === 'read') {
       this.stats.auto += 1;
       return { approved: true, reason: 'read-only tool' };
@@ -60,7 +60,7 @@ export class ApprovalManager {
 
     let approved = false;
     try {
-      approved = await this.confirm({ tool, risk, args, preview, reasons, critical });
+      approved = await this.confirm({ tool, label, risk, args, preview, reasons, critical });
     } catch (error) {
       this.logger?.warn('approval prompt failed', { tool, error: error.message });
       approved = false;

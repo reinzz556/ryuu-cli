@@ -61,7 +61,9 @@ of the current workspace keeps the last /provider and /model choice.
 Commands inside the CLI: /help, /status, /worklog, /files, /tree, /tools,
 /processes, /logs, /expand, /cancel, /history, /sessions, /diff, /undo, /config,
 /doctor, /provider, /model, /addmodel, /delmodel, /cmodel, /custommodel,
-/workspace, /clear, /memory, /resume, /bash, /exit.
+/mcp, /workspace, /clear, /memory, /resume, /bash, /exit.
+MCP servers (Model Context Protocol) add tools to the agent at runtime; run
+/mcp add in an interactive session. See docs/mcp.md.
 A line starting with "!" runs a shell command yourself (same as /bash).
 While a task runs, slash commands still work; a new prompt waits until it ends.
 

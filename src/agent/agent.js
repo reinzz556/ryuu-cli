@@ -1104,7 +1104,14 @@ export class Agent {
           // their own colour. Resolved once here so every event of this call
           // carries the same flag.
           const callPlugin = typeof this.registry?.pluginFor === 'function' ? this.registry.pluginFor(call.name) : null;
+          // `plugin` stays the plugin name (its documented event contract); the
+          // MCP identity travels alongside it so the renderer can draw
+          // `mcp:<server>:<tool>` without inspecting the registry.
           const pluginName = callPlugin ? callPlugin.name : null;
+          const callMcp = callPlugin?.mcp
+            ? { server: callPlugin.server, tool: callPlugin.displayNames?.[call.name] || call.name }
+            : null;
+          const approvalLabel = callMcp ? `mcp:${callMcp.server}:${callMcp.tool}` : null;
           const duplicateKey = `${call.name}\u0000${call.argumentsText}`;
           if (seenInStep.has(duplicateKey)) {
             this.#toolReply(messages, call, { ok: false, error: { code: 'DUPLICATE_CALL', message: 'Duplicate tool call in the same step was ignored.' } }, session);
@@ -1188,6 +1195,7 @@ export class Agent {
                 durationMs: 0,
                 cached: true,
                 plugin: pluginName,
+                mcp: callMcp,
                 summary: `${args.path} already read and unchanged — not read again`,
               });
               this.#toolReply(
@@ -1235,7 +1243,7 @@ export class Agent {
               ok: false,
               error: { code: previewError.code || 'PREVIEW_FAILED', message: previewError.message },
             }, session);
-            this.#emit('toolEnd', { name: call.name, ok: false, durationMs: 0, plugin: pluginName, summary: previewError.message });
+            this.#emit('toolEnd', { name: call.name, ok: false, durationMs: 0, plugin: pluginName, mcp: callMcp, summary: previewError.message });
             continue;
           }
 
@@ -1243,6 +1251,7 @@ export class Agent {
           if (tool.requiresApproval) {
             const decision = await this.approvals.request({
               tool: call.name,
+              label: approvalLabel,
               risk: tool.risk,
               args,
               preview,
@@ -1250,7 +1259,7 @@ export class Agent {
               critical: assessment?.level === 'critical',
             });
             if (!decision.approved) {
-              this.#emit('toolDenied', { name: call.name, reason: decision.reason, plugin: pluginName });
+              this.#emit('toolDenied', { name: call.name, reason: decision.reason, plugin: pluginName, mcp: callMcp });
               session.transcript.push({ role: 'tool', name: call.name, ok: false, content: decision.reason, at: nowIso() });
               this.#toolReply(messages, call, {
                 ok: false,
@@ -1274,6 +1283,7 @@ export class Agent {
             index: callIndex,
             total: calls.length,
             plugin: pluginName,
+            mcp: callMcp,
             detail: describeToolTarget(call.name, args),
           });
           const toolStarted = Date.now();
@@ -1302,6 +1312,7 @@ export class Agent {
               ok: true,
               durationMs,
               plugin: pluginName,
+              mcp: callMcp,
               summary: summarizeToolResult(call.name, result),
             });
             // The command the user approved and what it actually printed: the
@@ -1327,7 +1338,7 @@ export class Agent {
             const durationMs = Date.now() - toolStarted;
             const message = toolError?.message || String(toolError);
             failureCounts.set(callKey, previousFailures + 1);
-            this.#emit('toolEnd', { name: call.name, ok: false, durationMs, plugin: pluginName, summary: message });
+            this.#emit('toolEnd', { name: call.name, ok: false, durationMs, plugin: pluginName, mcp: callMcp, summary: message });
             session.issues.push(`${call.name}: ${message.slice(0, 300)}`);
             this.#toolReply(messages, call, {
               ok: false,

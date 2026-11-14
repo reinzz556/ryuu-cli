@@ -3,6 +3,40 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-11-14
+
+### Ditambahkan
+
+- **MCP client penuh: STDIO, Streamable HTTP, dan OAuth.** Server MCP dapat
+ditambahkan pengguna tanpa mengubah source code Ryuu. Tool dari server otomatis
+masuk ke registry dan agent loop dengan nama internal `mcp_<server>_<tool>`
+(aman untuk provider, suffix `_2` saat bentrok) dan tampilan
+`mcp:<server>:<tool>`: kata `mcp` kuning, `:server:tool` biru langit, konsisten
+dengan tool plugin di terminal maupun TUI. Resource, prompt, notifikasi
+`tools/list_changed`, reconnect, timeout, cancellation, dan graceful shutdown
+ditangani oleh manager yang sama.
+- **Command `/mcp`.** `list`, `status`, `add` (wizard interaktif), `remove`,
+`enable`, `disable`, `connect`, `disconnect`, `restart`/`reconnect`, `refresh`,
+`test`, `info`, `tools`, `resources`, `prompts`, `logs`, `config`, dan `token`
+(impor token dari file agar tidak terecho). Semua terdaftar di dispatcher yang
+sama dengan command lain sehingga tersedia di REPL dan TUI.
+- **Approval gate untuk tool MCP.** Klasifikasi risiko memakai override
+`toolRisk`, `destructiveHint`, dan pola nama; anotasi `readOnlyHint` dari server
+tidak pernah menurunkan risiko. Tool yang tidak dikenal dianggap `write` dan
+selalu melewati approval, dengan pratinjau argumen yang jelas. Deskripsi server
+diberi label asal agar tidak diperlakukan sebagai instruksi sistem.
+- **Keamanan dan lifecycle.** Config global di `<config-dir>/ryuu/mcp/` dengan
+secret terpisah di `credentials/<server>.json` (permission `0600`), log yang
+disunting, STDIO dijalankan tanpa shell dengan executable dan `cwd` tervalidasi,
+guard SSRF untuk HTTP, batas ukuran respons, serta pembersihan proses anak saat
+disconnect atau keluar. Tidak ada dependency baru; memakai
+`@modelcontextprotocol/sdk` yang sudah terpasang.
+- **Dokumentasi MCP.** `docs/mcp.md` mencakup transport, autentikasi,
+konfigurasi, keamanan, contoh STDIO/HTTP/OAuth, dan troubleshooting; `/help` dan
+README diperbarui. Test baru mencakup unit, STDIO, HTTP, OAuth, tools/resources/
+prompts, error/timeout, reconnect, approval, bentrok nama, command, warna, dan
+kompatibilitas plugin.
+
 ## [0.6.1] - 2026-11-07
 
 ### Ditambahkan

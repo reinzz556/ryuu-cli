@@ -66,8 +66,27 @@ export class ToolRegistry {
       }
     }
     for (const tool of prepared) this.tools.set(tool.name, tool);
-    this.plugins.set(name, { name, version: plugin.version || '0.0.0', toolNames: prepared.map((t) => t.name) });
+    this.plugins.set(name, {
+      name,
+      version: plugin.version || '0.0.0',
+      toolNames: prepared.map((t) => t.name),
+      // MCP servers are registered as plugins so `/tools`, the renderer and the
+      // approval labels already know a tool's origin. The extra fields are
+      // display metadata only and are never sent to the provider.
+      ...(plugin.mcp
+        ? { mcp: true, server: plugin.server || name, displayNames: { ...(plugin.displayNames || {}) } }
+        : {}),
+    });
     return { name, tools: prepared.map((t) => t.name) };
+  }
+
+  /** Remove every tool of one plugin group (used by /mcp disconnect|refresh). */
+  unregisterPlugin(name) {
+    const entry = this.plugins.get(name);
+    if (!entry) return 0;
+    for (const toolName of entry.toolNames) this.tools.delete(toolName);
+    this.plugins.delete(name);
+    return entry.toolNames.length;
   }
 
   get(name) {

@@ -5,7 +5,7 @@ import { renderMarkdown } from './markdown.js';
 import { readVersion } from '../utils/version.js';
 import { bannerHint, bannerLines } from './banner.js';
 import { copyToClipboard } from '../services/clipboard.js';
-import { toolDisplayName } from '../utils/tool-display.js';
+import { mcpDisplayName, toolDisplayName } from '../utils/tool-display.js';
 import {
   cleanModelTokens,
   cleanReasoning,
@@ -639,13 +639,16 @@ function buildRows(item, width, { c, color }) {
     const failed = item.ok === false;
     const mark = failed ? paint('red', '✕') : paint('green', '✓');
     // Plugin tools wear their own colour — sky blue and bold — so an installed
-    // integration never looks like built-in tooling. A failure is still red.
-    const label = toolDisplayName(item.name, item.plugin);
+    // integration never looks like built-in tooling. MCP tools are their own
+    // identity: `mcp` in yellow, `:server:tool` in sky blue. A failure is red.
+    const label = item.mcp ? mcpDisplayName(item.mcp.server, item.mcp.tool) : toolDisplayName(item.name, item.plugin);
     const name = failed
       ? c.bold(paint('red', label))
-      : item.plugin
-        ? c.bold(paint('sky', label))
-        : paint('yellow', label);
+      : item.mcp
+        ? `${c.bold(paint('yellow', 'mcp'))}${c.bold(paint('sky', label.slice(3)))}`
+        : item.plugin
+          ? c.bold(paint('sky', label))
+          : paint('yellow', label);
     if (failed) {
       pushHeader(`${mark} ${name}${item.durationMs ? ` ${dim(`· ${formatSeconds(item.durationMs)}`)}` : ''}`);
       pushWrapped(item.summary || 'tool failed', '   ', 'redSoft', { dimmed: true });
@@ -793,6 +796,7 @@ export class Tui {
       maxSteps: null,
       tool: '',
       toolPlugin: null,
+      toolMcp: null,
       completionTokens: 0,
       frame: 0,
       output: '',
@@ -1177,22 +1181,41 @@ export class Tui {
     this.requestRender();
   }
 
-  toolStart({ name = '', detail = '', plugin = null } = {}) {
-    this.status.tool = name;
-    // Plugin tools keep their own colour in the status bar too.
-    this.status.toolPlugin = plugin || null;
+  /** Compact MCP connection table, matching `/mcp` in the line interface. */
+  mcpServers({ title = 'MCP SERVERS', summary = '', rows = [] } = {}) {
+    const colors = { connected: 'green', connecting: 'amber', disconnected: 'gray', disabled: 'gray', error: 'red' };
+    const lines = [
+      ` ${this.paint('sky', '◇')} ${this.c.bold(this.paint('cyan', title))} ${this.paint('gray', `· ${summary}`)}`,
+    ];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const color = colors[row.state] || 'gray';
+      lines.push(
+        `   ${this.paint('white', String(row.name).padEnd(16))} ${this.paint(color, row.symbol)} ${this.paint(color, row.label)}` +
+          (row.detail ? ` ${this.paint('gray', row.detail)}` : ''),
+      );
+    }
+    this.transcript.message(lines.join('\n'));
     this.requestRender();
   }
 
-  toolEnd({ name = '', ok = true, durationMs = 0, summary = '', plugin = null } = {}) {
+  toolStart({ name = '', detail = '', plugin = null, mcp = null } = {}) {
+    this.status.tool = name;
+    // Plugin/MCP tools keep their own colour in the status bar too.
+    this.status.toolPlugin = plugin || null;
+    this.status.toolMcp = mcp || null;
+    this.requestRender();
+  }
+
+  toolEnd({ name = '', ok = true, durationMs = 0, summary = '', plugin = null, mcp = null } = {}) {
     this.status.tool = '';
     this.status.toolPlugin = null;
-    this.transcript.add({ kind: 'tool', name, ok, durationMs, summary, plugin: plugin || null, version: 0 });
+    this.status.toolMcp = null;
+    this.transcript.add({ kind: 'tool', name, ok, durationMs, summary, plugin: plugin || null, mcp: mcp || null, version: 0 });
     this.requestRender();
   }
 
-  toolDenied({ name = '', reason = '', plugin = null } = {}) {
-    const label = toolDisplayName(name, plugin);
+  toolDenied({ name = '', reason = '', plugin = null, mcp = null } = {}) {
+    const label = mcp ? mcpDisplayName(mcp.server, mcp.tool) : toolDisplayName(name, plugin);
     this.transcript.message(
       ` ${this.paint('amber', '⛔')} ${this.paint('amber', `${label} denied${reason ? ` · ${reason}` : ''}`)}`,
     );
@@ -1209,9 +1232,9 @@ export class Tui {
     this.requestRender();
   }
 
-  approvalRequest({ tool = '', risk = '', preview = '', reasons = [] } = {}) {
+  approvalRequest({ tool = '', label = null, risk = '', preview = '', reasons = [] } = {}) {
     const lines = [
-      ` ${this.paint('amber', '▲')} ${this.c.bold(this.paint('amber', `approval needed · ${tool}`))} ${this.paint('gray', `(${risk})`)}`,
+      ` ${this.paint('amber', '▲')} ${this.c.bold(this.paint('amber', `approval needed · ${label || tool}`))} ${this.paint('gray', `(${risk})`)}`,
     ];
     for (const line of String(preview || '').split('\n').slice(0, 12)) lines.push(`   ${this.paint('gray', line)}`);
     if (reasons?.length) lines.push(`   ${this.paint('gray', reasons.join(' · '))}`);
@@ -1548,9 +1571,17 @@ export class Tui {
       );
     }
     if (this.status.tool) {
-      // Plugin tools are sky blue and bold here too, matching the transcript.
-      const label = toolDisplayName(this.status.tool, this.status.toolPlugin);
-      parts.push(this.status.toolPlugin ? this.c.bold(this.paint('sky', label)) : this.paint('yellow', label));
+      // Plugin tools are sky blue and bold here too, matching the transcript;
+      // MCP keeps its yellow `mcp` + sky-blue rest in the status bar as well.
+      const mcp = this.status.toolMcp;
+      const label = mcp ? mcpDisplayName(mcp.server, mcp.tool) : toolDisplayName(this.status.tool, this.status.toolPlugin);
+      parts.push(
+        mcp
+          ? `${this.c.bold(this.paint('yellow', 'mcp'))}${this.c.bold(this.paint('sky', label.slice(3)))}`
+          : this.status.toolPlugin
+            ? this.c.bold(this.paint('sky', label))
+            : this.paint('yellow', label),
+      );
     }
     if (this.toast && Date.now() <= this.toast.until) parts.push(this.paint('green', this.toast.text));
     if (this.status.promptTokens || this.status.completionTokens) {
