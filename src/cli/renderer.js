@@ -531,6 +531,28 @@ export class Renderer {
     for (const line of String(text).split('\n')) this.#write(line);
   }
 
+  /** Lebar konten yang aman untuk box (dipakai renderer iklan). */
+  contentWidth() {
+    return this.#width();
+  }
+
+  /**
+   * Aman menampilkan iklan sekarang? Streaming jawaban aktif atau panel
+   * interaktif terbuka tidak boleh diselingi kotak iklan.
+   */
+  canShowAdvertisement() {
+    return !this.plain && !this.blockView && !this.answer.active && !this.answer.pending;
+  }
+
+  /**
+   * Tampilkan kotak iklan tanpa merusak streaming: #write memarkir prompt dan
+   * live region lebih dulu, lalu menggambarnya kembali di bawah output.
+   */
+  advertisement(lines = [], plainLines = []) {
+    const rows = this.plain ? plainLines : lines;
+    for (const line of rows) this.#write(line);
+  }
+
   /**
    * A framed monospace block with a `⧉ copy` chip — used by commands that must
    * show something copyable, such as a login URL. It reuses the Markdown code

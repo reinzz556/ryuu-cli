@@ -377,6 +377,9 @@ test('the composer stays usable while a task runs: commands execute, prompts are
     stderr: captureStream(),
     input,
     provider,
+    // Test ini menguji composer, bukan monetisasi: jangan biarkan scheduler
+    // melakukan request backend sungguhan selama assertion timing.
+    monetization: false,
     version: '0.1.0',
   });
 

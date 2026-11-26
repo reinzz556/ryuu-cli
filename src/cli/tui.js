@@ -336,6 +336,22 @@ export class Transcript {
     return this.add({ kind: 'plan', steps: steps.slice(0, 12), version: 0 });
   }
 
+  /**
+   * Iklan adalah blok tampilan, bukan blok kode: tidak punya chip copy, tidak
+   * bisa di-expand, dan tidak pernah menjadi target clipboard. Barisnya sudah
+   * membawa OSC 8 dari engine, jadi terminal yang membuka tautannya persis
+   * seperti mode normal.
+   */
+  advertisement(lines = [], { clickUrl = '', domain = '' } = {}) {
+    return this.add({
+      kind: 'advertisement',
+      lines: lines.map((line) => String(line ?? '')),
+      clickUrl: String(clickUrl || ''),
+      domain: String(domain || ''),
+      version: 0,
+    });
+  }
+
   reasoningStart() {
     return this.add({ kind: 'reasoning', text: '', chars: 0, active: true, collapsible: true });
   }
@@ -608,6 +624,19 @@ function buildRows(item, width, { c, color }) {
     return rows;
   }
 
+  if (item.kind === 'advertisement') {
+    // Box sudah dirender dan diwarnai engine, jadi warnanya sama dengan mode
+    // normal (SPONSORED amber, judul putih tebal, deskripsi redup, tautan biru,
+    // domain slate, border cyan). Jangan memakai renderMarkdown di sini: blok
+    // code otomatis menjadi target copy. Baris tanpa ANSI (fallback/test) tetap
+    // diberi warna blok supaya frame tidak polos.
+    const border = /^\s*[┌└├│─╭╰╮╯]/;
+    for (const line of item.lines || []) {
+      rows.push(` ${line.includes('\x1b') ? line : paint(border.test(line) ? 'sky' : 'white', line)}`);
+    }
+    return rows;
+  }
+
   if (item.kind === 'answer') {
     // Every block carries a small label, like reasoning does, so white response
     // text is never mistaken for the tail of a tool or a notice.
@@ -773,6 +802,9 @@ export class Tui {
     this.onSigint = onSigint;
     this.terminal = Boolean(input?.isTTY && output?.isTTY);
     this.color = color === false ? false : Boolean(this.terminal);
+    // Parity dengan Renderer: scheduler memakai ini untuk memilih baris berwarna
+    // + OSC 8 atau plain, sehingga terminal tanpa warna tidak mendapat escape.
+    this.ansi = this.color;
     const depth = typeof output?.getColorDepth === 'function' ? output.getColorDepth() : 1;
     // Truecolor when the terminal says so, so the palette keeps its exact hues.
     this.c = new Chalk({ level: this.color ? (depth >= 24 ? 3 : depth >= 8 ? 2 : 1) : 0 });
@@ -986,6 +1018,42 @@ export class Tui {
   info(message) {
     this.transcript.message(` ${this.paint('sky', '◇')} ${this.paint('white', message)}`);
     this.requestRender();
+  }
+
+  /** Lebar konten untuk kotak iklan, mengikuti terminal dan tetap maksimal 80. */
+  contentWidth() {
+    return Math.max(24, Math.min(80, (Number(this.output.columns) || 82) - 2));
+  }
+
+  /**
+   * Iklan masuk ke transcript sebagai blok terpisah, bukan frame live, supaya
+   * tidak mengganggu composer/overlay TUI. Baris berwarna dari engine dipakai
+   * apa adanya agar tampilannya sama dengan mode normal, termasuk escape OSC 8
+   * sehingga tautan tetap bisa diklik lewat terminal (Ctrl/Cmd+klik).
+   */
+  advertisement(lines = [], plainLines = [], meta = {}) {
+    const source = Array.isArray(lines) && lines.length > 0 ? lines : plainLines;
+    const cleaned = (source || [])
+      .map((line) => String(line ?? '').trimEnd())
+      .filter((line) => line.length > 0);
+    if (cleaned.length === 0) return;
+    this.transcript.advertisement(cleaned, {
+      clickUrl: meta.clickUrl || '',
+      domain: meta.domain || '',
+    });
+    this.requestRender();
+  }
+
+  /**
+   * Klik blok iklan tidak membuka apa pun sendiri: tautan OSC 8 di dalam blok
+   * adalah hyperlink asli yang dibuka terminal (Ctrl/Cmd+klik), sama seperti
+   * mode normal. Toast hanya mengingatkan caranya.
+   */
+  openAdvertisement(item) {
+    if (!item?.clickUrl) return false;
+    const label = item.domain || 'sponsor';
+    this.notify(`↗ Ctrl/Cmd+klik tautan ${label} untuk membuka`);
+    return true;
   }
 
   /**
@@ -1727,6 +1795,12 @@ export class Tui {
     // A sent prompt is a copy target, not a foldable block.
     if (item?.kind === 'task') {
       this.copyItem(item);
+      return;
+    }
+    // Iklan hanya tampilan: tidak menyalin, tidak membuka panel. Tautannya
+    // adalah OSC 8 asli, jadi terminal yang membuka (Ctrl/Cmd+klik).
+    if (item?.kind === 'advertisement') {
+      this.openAdvertisement(item);
       return;
     }
     this.transcript.toggle(id);

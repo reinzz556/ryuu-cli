@@ -456,6 +456,54 @@ test('a sent prompt shows a copy button, and clicking the prompt copies it', () 
   }
 });
 
+test('an advertisement keeps the normal-mode colours and its OSC 8 hyperlink', () => {
+  const { tui, writes } = tuiWithClipboard();
+  try {
+    tui.taskStart({ task: 'jalankan task', sessionId: 's1', maxSteps: 2 });
+    const plain = [
+      '  ┌──────────────────────────────┐',
+      '  │ SPONSORED                    │',
+      '  │ Pterokudesu                  │',
+      '  │ Buka Pterokudesu ↗           │',
+      '  │ my.pterokudesu.com           │',
+      '  └──────────────────────────────┘',
+    ];
+    // Baris berwarna seperti keluaran engine: label amber, tautan biru + OSC 8.
+    const colored = plain.map((line) => `${WHITE}${line}\x1b[0m`);
+    colored[1] = `\x1b[1m${YELLOW}${plain[1]}\x1b[0m`;
+    colored[3] = `${SKY}\x1b]8;;https://restapi.ryuu-dev.my.id/api/v1/ads/pterokudesu/click\x1b\\${plain[3]}\x1b]8;;\x1b\\\x1b[0m`;
+    tui.advertisement(colored, plain, {
+      clickUrl: 'https://restapi.ryuu-dev.my.id/api/v1/ads/pterokudesu/click',
+      domain: 'my.pterokudesu.com',
+    });
+    tui.forceRender();
+
+    const ad = tui.transcript.items.find((item) => item.kind === 'advertisement');
+    assert.ok(ad, 'iklan masuk sebagai blok advertisement');
+    assert.equal(ad.collapsible, false, 'iklan tidak bisa di-expand');
+    assert.equal(tui.copyMap.some(Boolean), false, 'iklan bukan target copy');
+
+    const rows = layoutTranscript(tui.transcript, 69, { c, color: false }).map((row) => row.text);
+    assert.ok(rows.some((row) => row.includes('SPONSORED')), 'label iklan terlihat');
+    assert.ok(rows.some((row) => row.includes('my.pterokudesu.com')), 'domain tujuan terlihat');
+    assert.ok(rows.some((row) => row.includes(YELLOW)), 'label SPONSORED memakai warna amber seperti mode normal');
+    assert.equal(rows.join('').includes('\x1b]8;;'), true, 'OSC 8 dipertahankan agar tautan bisa diklik terminal');
+
+    const index = tui.clickMap.indexOf(ad.id);
+    assert.ok(index >= 0, 'baris iklan ada di layar');
+    tui.handleMouseReport(['', '0', '10', String(index + 2), 'M']);
+    assert.equal(
+      writes.some((chunk) => chunk.includes('\x1b]52;c;')),
+      false,
+      'klik iklan tidak menulis OSC 52 / menyalin apa pun',
+    );
+    assert.match(tui.toast.text, /Ctrl\/Cmd\+klik tautan my\.pterokudesu\.com/);
+    assert.equal(ad.expanded, false, 'klik iklan tidak membuka panel');
+  } finally {
+    tui.close();
+  }
+});
+
 test('a code block shows a copy button, and clicking it copies only the code', () => {
   const { tui, writes } = tuiWithClipboard();
   try {

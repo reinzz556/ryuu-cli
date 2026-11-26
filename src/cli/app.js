@@ -24,6 +24,7 @@ import { runDoctor } from '../services/doctor.js';
 import { readProviderModel, stateDirFor, writeProviderPreference } from '../services/preferences.js';
 import { RyuuError } from '../utils/errors.js';
 import { readVersion } from '../utils/version.js';
+import { createAdScheduler } from '../monetization/scheduler.js';
 
 /**
  * Read one task from the prompt. Enter sends the task immediately, which is
@@ -65,6 +66,10 @@ export async function createApp({
   // `mcp: false` disables the integration, `mcp.autostart: false` keeps the
   // manager available to /mcp without connecting anything at startup.
   mcp: mcpOptions = null,
+  // `monetization: false` disables iklan (test/otomatisasi); object di-merge
+  // ke opsi scheduler. `adScheduler` memungkinkan test menyuntik scheduler.
+  monetization = null,
+  adScheduler: injectedAdScheduler = undefined,
   version = readVersion(),
 } = {}) {
   const interactive = cliOptions.interactive ?? Boolean(input.isTTY && stdout.isTTY);
@@ -92,6 +97,19 @@ export async function createApp({
   ].filter(Boolean);
   const logger = createLogger(config, { stderr, secrets: [...providerSecrets, ...searchSecrets] });
   if (config.webMcpDebug) logger.setLevel('debug');
+  // Monetisasi hanya untuk sesi terminal interaktif. Mode plain/pipe dan test
+  // tidak pernah menampilkan iklan, sehingga output dan streaming tetap utuh.
+  const adScheduler =
+    injectedAdScheduler !== undefined
+      ? injectedAdScheduler
+      : interactive && !cliOptions.plain && monetization !== false
+        ? createAdScheduler({
+            renderer,
+            logger,
+            cliVersion: version,
+            ...(monetization && typeof monetization === 'object' ? monetization : {}),
+          })
+        : null;
   const workspace = new Workspace(config.workspace, { logger });
   const processes = new ProcessManager({
     workspace,
@@ -287,10 +305,14 @@ export async function createApp({
     if (activeTask) throw new RyuuError('A task is already running. Use /cancel before starting another.', { code: 'TASK_BUSY' });
     const controller = new AbortController();
     activeTask = { controller, task };
+    // Scheduler hanya hidup selama task: iklan pertama baru muncul setelah
+    // interval acak 2-5 menit, bukan saat CLI dibuka.
+    adScheduler?.start();
     try {
       agent.projectSummary = await getProjectSummary();
       return await agent.run(task, { signal: controller.signal });
     } finally {
+      adScheduler?.stop();
       activeTask = null;
     }
   }
@@ -495,6 +517,7 @@ export async function createApp({
     renderer.closeBlockView?.();
     if (state?.activeShell) state.activeShell.controller.abort();
     if (activeTask) activeTask.controller.abort();
+    adScheduler?.stop();
     renderer.stopActivity();
     prompts?.close();
     const stopped = await processes.stopAll({ graceMs: 1500 }).catch(() => 0);
@@ -523,6 +546,7 @@ export async function createApp({
     agent,
     interactive,
     version,
+    adScheduler,
     banner,
     runTask,
     runInteractive,

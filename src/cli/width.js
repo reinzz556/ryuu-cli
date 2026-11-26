@@ -1,5 +1,9 @@
-/** ANSI control sequences (colours, cursor moves) that take no columns. */
-export const ANSI_SEQUENCE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+/**
+ * ANSI control sequences that take no columns: CSI (colours, cursor moves)
+ * and OSC (hyperlinks, clipboard). OSC 8 wajib ikut dibuang supaya lebar baris
+ * iklan tidak dihitung dari URL yang tidak terlihat.
+ */
+export const ANSI_SEQUENCE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 const ZERO_WIDTH_RE = /[\u0300-\u036f\u0483-\u0489\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/;
 

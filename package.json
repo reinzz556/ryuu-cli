@@ -1,6 +1,6 @@
 {
   "name": "@ryuu-reinzz/ryuu-cli",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Ryuu Agent CLI - an autonomous, approval-gated AI coding agent for your terminal",
   "type": "module",
   "bin": {
@@ -12,6 +12,7 @@
   },
   "files": [
     "src",
+    "dist",
     "docs",
     "README.md",
     "CHANGELOG.md"
@@ -26,6 +27,9 @@
     "test:unit": "node --test \"tests/unit/*.test.js\"",
     "test:integration": "node --test \"tests/integration/*.test.js\"",
     "check": "node scripts/check.js",
+    "build:monetization": "node ../ryuu-build/scripts/build-monetization.js",
+    "prepack": "node ../ryuu-build/scripts/build-monetization.js --out dist/monetization",
+    "postpack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "doctor": "node src/index.js --doctor",
     "verify": "npm run check && npm test"
   },

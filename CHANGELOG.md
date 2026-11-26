@@ -3,6 +3,31 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-11-26
+
+### Ditambahkan
+
+- **Monetisasi iklan CLI.** Engine iklan mengambil daftar dari backend, memilih
+  iklan acak tanpa pengulangan berurutan, dan menampilkannya hanya selama task
+  AI aktif dengan interval acak 2–5 menit. Iklan tidak dapat dimatikan pengguna,
+  tidak pernah mengirim prompt/isi file, dan setiap klik melewati redirect
+  pelacakan anonim.
+- **Tampilan iklan di mode normal dan `--tui`.** Kotak iklan mewarisi warna
+  engine (amber untuk label, putih untuk judul, biru untuk tautan, cyan untuk
+  border) dan memakai hyperlink OSC 8 sehingga klik dibuka oleh terminal, sama
+  seperti tautan biasa. Di TUI, blok iklan bukan target copy dan tidak bisa
+  di-expand.
+- **Pipeline build terpisah.** Source engine dan build script berada di
+  `agents/ryuu-build`; artifact terkompilasi (deflate+base64, checksum SHA-256,
+  opsi tanda tangan Ed25519) dibangun saat publish dan dibersihkan lagi dari
+  working tree setelah paket dibuat.
+
+### Diperbaiki
+
+- Klik iklan di `--tui` tidak lagi mencoba membuka browser sendiri dan tidak
+  menampilkan "browser tidak tersedia"; tautan memakai OSC 8 seperti mode
+  normal.
+
 ## [0.7.0] - 2026-11-14
 
 ### Ditambahkan
