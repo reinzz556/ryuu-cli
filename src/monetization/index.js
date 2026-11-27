@@ -26,8 +26,8 @@ const require = createRequire(import.meta.url);
 // Pipeline build hidup di project terpisah `agents/ryuu-build`, di luar folder
 // CLI. Package hasil publish membawa artifact di `dist/` lokal; checkout
 // development membaca artifact/source dari folder build tersebut.
-export const BUILD_ROOT = path.join(__dirname, '..', '..', '..', 'ryuu-build');
-const LOCAL_ARTIFACT_DIR = path.join(__dirname, '..', '..', 'dist', 'monetization');
+export const BUILD_ROOT = path.join(__dirname, 'engine');
+const LOCAL_ARTIFACT_DIR = path.join(__dirname, 'engine', 'dist', 'monetization');
 const BUILD_ARTIFACT_DIR = path.join(BUILD_ROOT, 'dist', 'monetization');
 export const ARTIFACT_DIR = fs.existsSync(path.join(LOCAL_ARTIFACT_DIR, 'manifest.json'))
   ? LOCAL_ARTIFACT_DIR
@@ -150,14 +150,5 @@ export function loadMonetizationEngine({ logger = null, force = false } = {}) {
     // sebagai pengganti diam-diam.
     throw new MonetizationIntegrityError(`Modul monetisasi tidak lolos verifikasi: ${verified.reason}.`);
   }
-
-  const engine = require(SOURCE_FILE);
-  cached = {
-    engine,
-    mode: 'source',
-    manifest: null,
-    integrity: 'development-source',
-  };
-  logger?.debug?.('monetization: memakai source development (artifact belum dibangun)');
   return cached;
 }

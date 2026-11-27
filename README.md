@@ -8,7 +8,7 @@ kompatibel dengan OpenAI: NVIDIA Integrate API dan Token Harbor sudah tersedia,
 dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 
 ```
-  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.7.1
+  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.7.2
   ██▀▀▀▀██▄  workspace  /path/to/your/project
   ██    ▀██  runtime    Node.js v22.14.0 · Linux
   ██▄▄▄▄██▀  model      minimaxai/minimax-m3.1-flash
@@ -1385,7 +1385,7 @@ secara manual di Windows.
 - `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
   JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
   penyederhanaan dari halaman tersebut.
-- Ini project 0.7.1: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+- Ini project 0.7.2: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
 
 ## Daftar periksa validasi API langsung
 

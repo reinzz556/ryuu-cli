@@ -3,7 +3,7 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
-## [0.7.1] - 2026-11-26
+## [0.7.2] - 2026-11-26
 
 ### Ditambahkan
 
