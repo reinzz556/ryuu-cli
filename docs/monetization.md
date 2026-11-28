@@ -246,28 +246,110 @@ node scripts/build-monetization.js
 Output:
 
 ```
-agents/ryuu-build/dist/monetization/engine.cjs     # payload deflate+base64
-agents/ryuu-build/dist/monetization/manifest.json  # versi, sha256, ukuran, source hash
+agents/ryuu-build/dist/monetization/
+├── engine.node                                  # artifact host (legacy)
+├── manifest.json                                # versi, daftar prebuild, sha256, source hash
+└── prebuilds/
+    ├── linux-x64/engine.node
+    ├── linux-arm64/engine.node
+    ├── linux-x64-musl/engine.node
+    ├── darwin-x64/engine.node
+    ├── darwin-arm64/engine.node
+    ├── win32-x64/engine.node
+    └── win32-arm64/engine.node
 ```
 
-Source development berada di `agents/ryuu-build/monetization-src/engine.cjs` dan
-build script di `agents/ryuu-build/scripts/build-monetization.js`. Keduanya
-tidak masuk package CLI. Saat `npm pack`/`npm publish`, hook `prepack`
+Artifact yang dikirim ke pengguna adalah **addon native hasil kompilasi**
+(`native/engine.cc` → `engine.node`), bukan JavaScript. Tidak ada source atau
+bytecode JS di dalam artifact; logika engine hanya ada sebagai kode mesin.
+Addon memakai N-API (ABI stabil), jadi satu binary berlaku untuk banyak versi
+Node pada platform/arsitektur yang sama.
+
+**Prebuild multi-platform.** Pengguna tidak perlu compiler saat instalasi:
+tarball membawa binary untuk platform/arsitektur yang didukung, dan loader
+memilih yang cocok (`prebuilds/<platform>-<arch>[-musl]/engine.node`, kecocokan
+`libc` untuk Linux). `manifest.prebuilds` mencatat path, SHA-256, dan ukuran
+tiap binary; daftar itu ikut ditandatangani bila signing aktif. Build per
+platform dilakukan oleh `.github/workflows/prebuilds.yml` (ubuntu x64/arm64,
+Alpine musl, macOS x64/arm64, Windows x64/arm64), lalu job `assemble`
+menjalankan:
+
+```bash
+node scripts/assemble-prebuilds.js --dir dist/monetization
+```
+
+Script itu memindai `prebuilds/*/engine.node`, menghitung hash, menulis
+manifest gabungan, dan menyalin binary host menjadi `engine.node` legacy.
+
+Setiap job matriks juga menjalankan smoke test di platform aslinya sebelum
+mengunggah artifact:
+
+```bash
+node scripts/smoke-prebuild.js          # prebuild host
+node scripts/smoke-prebuild.js --file … # prebuild tertentu
+```
+
+Smoke test memuat addon dengan `require` dan memeriksa normalisasi payload,
+pemilihan iklan, `nextDelay`, `buildClickUrl`, renderer (OSC 8, lebar baris,
+lebar karakter CJK), serta format session id. Binary yang gagal dimuat atau
+crash membuat job gagal, jadi artifact rusak tidak pernah diunggah.
+
+Build memerlukan `node-gyp` 12 + compiler C++ (dan unduhan header Node saat
+pertama kali). Script memakai `node-gyp@12` lewat `npx` supaya header cocok
+dengan Node yang menjalankan build dan tidak menautkan `libnode` sistem (itu
+membuat addon crash saat exit). Set `NODE_GYP=/path/node-gyp` untuk toolchain
+offline.
+
+Source development berada di `agents/ryuu-build/monetization-src/engine.cjs`
+(fallback dev, bukan artifact) dan implementasi native di
+`agents/ryuu-build/native/engine.cc`; build script di
+`agents/ryuu-build/scripts/build-monetization.js`. Semuanya tidak masuk package
+CLI. Saat `npm pack`/`npm publish`, hook `prepack`
 membangun artifact ke `dist/monetization` di dalam package agar tarball membawa
 engine terkompilasi, lalu `postpack` menghapus `dist/` lagi sehingga working
 tree CLI tetap bersih. Loader `src/monetization/index.js` memakai artifact lokal
 bila ada; saat development ia membaca folder build sibling.
 
+**Pemilihan binary dari backend.** Bila package tidak membawa prebuild untuk
+platform ini (mis. hanya sebagian platform yang dipaketkan), Ryuu memilih
+binary dari `https://restapi.ryuu-dev.my.id`:
+
+1. saat start, platform/arsitektur/libc runtime dicek dan engine lokal dimuat;
+   hanya jika belum ada, prefetch manifest dijalankan di latar belakang;
+2. `GET /api/v1/engine/prebuilds?platform=…&arch=…&libc=…` mengembalikan
+   prebuild yang cocok beserta SHA-256, ukuran, dan URL;
+3. binary diunduh (maksimal 8 MB), diverifikasi hash + ukurannya, lalu ditulis
+   atomik ke `<config>/engine/<target>/current/engine.node`;
+4. cache dipakai ulang tanpa jaringan selama 6 jam; bila backend mati, cache
+   lama yang masih utuh tetap dipakai;
+5. hanya URL dengan origin dan path `/api/v1/engine/prebuilds/*` yang sama
+   dengan base URL yang diterima.
+
+Scheduler mengulang langkah ini saat task dimulai bila prefetch belum selesai,
+sehingga kegagalan jaringan hanya melewati iklan untuk sesi itu. Override
+backend dengan `RYUU_ENGINE_API_BASE`, cache dengan `RYUU_ENGINE_CACHE`, dan
+matikan prefetch dengan `RYUU_NO_ENGINE_PREFETCH=1`.
+
 Loader (`src/monetization/index.js`):
 
-1. membaca manifest;
-2. menghitung SHA-256 artifact dan membandingkannya;
-3. memverifikasi ukuran;
-4. bila manifest bertanda tangan, memverifikasi Ed25519 dengan public key
+1. membaca manifest artifact yang dibundel;
+2. bila manifest bertanda tangan, memverifikasi Ed25519 dengan public key
    tepercaya (`src/monetization/trusted-key.pub` atau
    `RYUU_ADS_PUBLIC_KEY`);
-5. memuat artifact; artifact yang rusak **tidak** di-fallback ke source
-   (fail closed).
+3. memilih prebuild yang cocok dengan `platform`/`arch` (dan `libc` di Linux);
+   manifest lama tanpa `prebuilds` memakai `engine.node` tunggal dengan cek
+   platform/arch;
+4. menolak path prebuild yang keluar dari folder artifact;
+5. menghitung SHA-256 dan ukuran binary pilihan, membandingkannya dengan
+   manifest;
+6. bila tidak ada prebuild yang cocok, memakai binary cache hasil unduhan
+   backend (hash + ukuran diperiksa ulang dengan aturan yang sama);
+7. memuat addon; artifact yang rusak, tidak cocok, atau gagal dimuat **tidak**
+   di-fallback ke source (fail closed).
+
+I/O jaringan (`fetchAds`, `sendImpression`) tetap di JS
+(`src/monetization/network.js`) karena N-API tidak bisa menunggu `fetch`;
+wrapper itu hanya transport dan memanggil normalisasi/engine native.
 
 Tanda tangan opsional:
 
@@ -300,6 +382,10 @@ RYUU_ADS_REQUIRE_ARTIFACT=1 ryuu
 | `RYUU_ADS_REQUIRE_ARTIFACT=1` | CLI | Tolak berjalan tanpa artifact terverifikasi |
 | `RYUU_ADS_PUBLIC_KEY` | CLI | Public key Ed25519 untuk verifikasi tanda tangan |
 | `RYUU_ADS_SIGNING_KEY` | build | Private key Ed25519 saat build (jangan di-commit) |
+| `RYUU_ENGINE_API_BASE` | CLI | Override base URL pemilihan binary engine (default `https://restapi.ryuu-dev.my.id`) |
+| `RYUU_ENGINE_CACHE` | CLI | Folder cache binary engine (default `<config>/engine`) |
+| `RYUU_NO_ENGINE_PREFETCH=1` | CLI | Matikan prefetch binary saat start |
+| `RYUU_ENGINE_DIR` | backend | Folder manifest + prebuild di server (default `website/api/public/engine`) |
 
 Tidak ada secret backend yang dibutuhkan CLI.
 
@@ -312,6 +398,10 @@ Tidak ada secret backend yang dibutuhkan CLI.
 3. Boot pertama akan membuat `lib/ads.json` dari `lib/ads/seed.json`.
 4. Pastikan HTTPS aktif dan domain `restapi.ryuu-dev.my.id` mengarah ke server.
 5. Tidak perlu migrasi SQL; tidak ada dependensi baru.
+6. Salin hasil `agents/ryuu-build/dist/monetization` ke `public/engine`
+   (`manifest.json` + `prebuilds/`), atau arahkan `RYUU_ENGINE_DIR` ke lokasi
+   hasil assemble. Endpoint: `/api/v1/engine/prebuilds` dan
+   `/api/v1/engine/prebuilds/<target>/engine.node`.
 6. Endpoint baru otomatis tersedia karena router dipasang di `index.js`
    sebelum auto-loader endpoint lama.
 

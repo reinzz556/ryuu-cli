@@ -43,6 +43,7 @@ const ERROR_HINTS = {
   AUTH_FORBIDDEN: 'Verify this key has access to the selected model in the provider dashboard; /provider shows the active provider.',
   MODEL_NOT_FOUND: 'Check the model id with /model and the base URL with /config (it must end with /v1).',
   RATE_LIMIT: 'The provider may enforce quotas. Wait, reduce context, or switch model/provider with /model and /provider.',
+  QUOTA_EXHAUSTED: 'The account behind this key is out of quota or credit. Wait for the reset shown above, top up, or switch model/provider with /model and /provider.',
   TOOLS_UNSUPPORTED: 'This model may not support OpenAI-style tool calling. Pick a tool-capable model with /model.',
   CONTEXT_LENGTH: 'Start a new session or use a smaller task; agent.maxContextChars controls local compaction.',
   PROVIDER_NETWORK: 'Check network/DNS access to the active provider and any proxy settings; /provider shows the endpoint.',

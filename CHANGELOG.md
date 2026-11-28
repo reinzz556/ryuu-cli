@@ -3,6 +3,46 @@
 Semua perubahan penting pada Ryuu Agent CLI didokumentasikan di sini.
 Project ini mengikuti [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-11-28
+
+### Ditambahkan
+
+- **Pembaruan otomatis di latar belakang.** Setiap run mengecek versi terbaru
+  `@ryuu-reinzz/ryuu-cli` di npm tanpa menahan task. Bila lebih baru dan Ryuu
+  berjalan dari `node_modules`, task dihentikan, seluruh proses anak ditutup,
+  paket baru diunduh dengan `npm pack`, diverifikasi, lalu ditukar dengan paket
+  lama (rollback otomatis bila gagal), dan Ryuu keluar dengan pesan
+  `Jalankan ulang ryuu`. Git checkout tidak pernah ditimpa.
+- **Pemilihan binary engine dari backend.** Saat start, Ryuu mengecek
+  platform/arsitektur/libc dan memakai prebuild bawaan bila ada; jika tidak,
+  binary yang cocok dipilih dari `restapi.ryuu-dev.my.id`, diverifikasi
+  SHA-256/ukurannya, lalu di-cache di `<config>/engine`. Backend baru di
+  `website/api/lib/engine` melayani manifest dan unduhan binary; kegagalan
+  jaringan memakai cache lama atau melewati iklan, tidak menggagalkan task.
+
+### Diubah
+
+- **Artifact monetisasi kini addon native `engine.node`.** Logika engine
+  (normalisasi payload, pemilihan iklan, renderer, URL klik) dipindah dari
+  JavaScript ke `agents/ryuu-build/native/engine.cc` dan dikompilasi sebagai
+  addon N-API. Artifact yang dikirim tidak lagi berisi source/bytecode JS, dan
+  loader menolak artifact yang tidak cocok atau gagal dimuat (fail closed,
+  tanpa fallback).
+- **Prebuild multi-platform.** Paket membawa `prebuilds/<platform>-<arch>`
+  (Linux glibc/musl, macOS, Windows; x64/arm64) sehingga pengguna tidak perlu
+  compiler saat instalasi. Loader memilih binary sesuai platform/arsitektur
+  (dan libc), dengan hash per-prebuild di manifest; workflow CI membangun
+  matriks tersebut, menjalankan smoke test di tiap platform sebelum upload,
+  dan `assemble-prebuilds.js` merakit manifestnya.
+
+### Diperbaiki
+
+- **429 kuota habis tidak lagi membuat UI berhenti di `thinking`.** Kuota atau
+  saldo yang habis (`free_tier_limit_reached`, `insufficient_quota`, saldo nol)
+  dipetakan ke `QUOTA_EXHAUSTED` yang tidak dicoba ulang, lengkap dengan pesan
+  reset/top-up dari provider. Rate limit biasa tetap dicoba ulang, tetapi
+  maksimal tiga kali penyambungan di level agent.
+
 ## [0.7.2] - 2026-11-26
 
 ### Ditambahkan

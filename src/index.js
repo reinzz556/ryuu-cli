@@ -19,6 +19,9 @@ import { applyPersistedModel, applyPersistedProvider, stateDirFor } from './serv
 import { createLogger } from './services/logger.js';
 import { Workspace } from './services/workspace.js';
 import { readVersion } from './utils/version.js';
+import { PACKAGE_NAME, installUpdate, startUpdateCheck } from './services/update.js';
+import { ensureEngineBinary } from './services/engine-binary.js';
+import { loadMonetizationEngine } from './monetization/index.js';
 
 // The version lives in package.json; this module re-exports the reader so the
 // CLI entry point and the tests keep one import site.
@@ -373,6 +376,29 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
+  // A newer published version is looked up while Ryuu works: the run is never
+  // delayed by it, and a failure to check is silent. Only an install from
+  // node_modules is replaced; a git checkout is left alone.
+  const updateCheck = startUpdateCheck();
+
+  // Engine monetisasi dipilih sesuai platform runtime. Prefetch berjalan di
+  // latar belakang: hasilnya di-cache, tidak menunda task, dan kegagalan
+  // jaringan tidak pernah menggagalkan startup. Scheduler mengulanginya saat
+  // task dimulai bila belum selesai.
+  if (!process.env.NODE_TEST_CONTEXT && !process.env.CI && process.env.RYUU_NO_ENGINE_PREFETCH !== '1') {
+    try {
+      if (!loadMonetizationEngine()?.engine) void ensureEngineBinary({ timeoutMs: 3000 }).catch(() => {});
+    } catch {
+      // Artifact lokal rusak: biarkan loader melaporkannya saat dipakai, jangan
+      // menggagalkan startup karena prefetch opsional.
+    }
+  }
+
+  let updateInfo = null;
+  updateCheck.promise.then((info) => {
+    updateInfo = info;
+  }).catch(() => {});
+
   const task = options.task || (await readStdin());
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !options.task && !task;
 
@@ -396,10 +422,17 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (interactive) {
+    // The check runs in the background: when it lands, the session stops so the
+    // package can be replaced, and the caller exits after the swap.
+    updateCheck.promise.then((info) => {
+      if (info?.installable) app.requestUpdate();
+    }).catch(() => {});
     await app.runInteractive();
+    updateCheck.cancel();
     // Belt and braces: whatever the UI left attached, a paused stdin lets the
     // process end as soon as /exit returns, instead of waiting for a keypress.
     process.stdin.pause?.();
+    if (updateInfo?.installable) return runSelfUpdate(updateInfo);
     return 0;
   }
 
@@ -417,16 +450,60 @@ export async function main(argv = process.argv.slice(2)) {
       : "Non-interactive mode: approvals are denied unless --yes (writes) or --auto-approve (all actions) is used.",
   );
   try {
-    const summary = await app.runTask(task);
+    const runPromise = app.runTask(task);
+    // Race the task against the version check so a newer release interrupts it
+    // instead of waiting for the task to finish.
+    const outcome = await Promise.race([
+      runPromise.then((summary) => ({ kind: 'run', summary })),
+      updateCheck.promise.then((info) => (info?.installable ? { kind: 'update', info } : new Promise(() => {}))),
+    ]);
+    if (outcome.kind === 'update') {
+      app.cancelActiveTask();
+      await runPromise.catch(() => {});
+      await app.close();
+      updateCheck.cancel();
+      return await runSelfUpdate(outcome.info);
+    }
+    const summary = outcome.summary;
     await app.close();
+    updateCheck.cancel();
+    // The task may finish just before the check lands; still update, because the
+    // new version is known and the user has to restart either way.
+    if (updateInfo?.installable) return runSelfUpdate(updateInfo);
+    if (updateInfo && !updateInfo.installable) reportManualUpdate(updateInfo);
     if (summary.status === 'completed' || summary.status === 'step-limit') return summary.status === 'completed' ? 0 : 1;
     if (summary.status === 'cancelled') return 130;
     return 1;
   } catch (error) {
     process.stderr.write(`${formatErrorBlock(error, { debug: options.debug })}\n`);
     await app.close();
+    updateCheck.cancel();
     return 3;
   }
+}
+
+/** Swap the installed package for the newer release, then tell the user to restart. */
+async function runSelfUpdate(info) {
+  const target = `${PACKAGE_NAME}@${info.latest}`;
+  process.stdout.write(`\n[update] Versi baru ${info.latest} ditemukan (terpasang ${info.current}); semua proses dihentikan.\n`);
+  process.stdout.write(`[update] Memasang ${target}...\n`);
+  try {
+    await installUpdate({ latest: info.latest, root: info.root });
+    process.stdout.write(`[update] Selesai: v${info.latest} terpasang.\n\nJalankan ulang ryuu\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`[update] Gagal memperbarui: ${error.message}\n`);
+    process.stderr.write(`[update] Instal manual: npm install -g ${target}\n`);
+    return 1;
+  }
+}
+
+/** A newer release exists but this copy is not an npm install; never rewrite it. */
+function reportManualUpdate(info) {
+  process.stderr.write(
+    `[update] Versi lebih baru tersedia: v${info.latest} (terpasang v${info.current}). ` +
+      `Instalasi ini bukan dari node_modules; perbarui dengan \`npm install -g ${PACKAGE_NAME}@${info.latest}\`.\n`,
+  );
 }
 
 function isInvokedDirectly() {

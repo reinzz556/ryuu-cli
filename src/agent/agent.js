@@ -16,6 +16,14 @@ const CHANGE_TOOLS = new Set(['write_file', 'edit_file', 'create_file', 'move_fi
 const MAX_REPEATED_FAILURES = 2;
 
 /**
+ * A rate limit is recovered at most this many times, whatever
+ * `agent.maxRecoveryAttempts` says. The provider already retried with its own
+ * backoff, so an exhausted quota must surface as an error instead of holding
+ * the run on `thinking` until the task deadline.
+ */
+const MAX_RATE_LIMIT_RECOVERIES = 3;
+
+/**
  * Images are resent with every later request in the same task, so a task is
  * capped: a long screenshot loop would otherwise grow the prompt without bound.
  */
@@ -423,6 +431,7 @@ export class Agent {
       } catch (error) {
         if (error instanceof CancelledError || signal?.aborted) throw error;
         if (attempt >= maxAttempts || !isRecoverableError(error)) throw error;
+        if (error.code === 'RATE_LIMIT' && attempt >= MAX_RATE_LIMIT_RECOVERIES) throw error;
         attempt += 1;
         if (error.code === 'INVALID_TOOL_ARGUMENTS') {
           const repaired = repairMessageHistory(messages);

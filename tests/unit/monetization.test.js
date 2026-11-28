@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import { Writable } from 'node:stream';
 
 import {
@@ -167,16 +170,69 @@ test('artifact yang dimodifikasi terdeteksi oleh checksum', () => {
     // bisa dimodifikasi. Build script diuji terpisah oleh `npm run build:monetization`.
     return;
   }
-  const original = fs.readFileSync(ARTIFACT_FILE);
+  // Addon yang sudah dimuat tidak boleh ditimpa di tempat: menulis ulang file
+  // .node yang sedang di-map akan merusak proses. Verifikasi dilakukan pada
+  // salinan di direktori sementara.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ryuu-artifact-'));
+  const copy = path.join(dir, path.basename(ARTIFACT_FILE));
+  const manifestCopy = path.join(dir, 'manifest.json');
   try {
-    fs.appendFileSync(ARTIFACT_FILE, '\n// tampered\n');
-    const tampered = verifyMonetizationArtifact();
+    fs.copyFileSync(ARTIFACT_FILE, copy);
+    fs.copyFileSync(path.join(path.dirname(ARTIFACT_FILE), 'manifest.json'), manifestCopy);
+    assert.equal(verifyMonetizationArtifact({ file: copy, manifestFile: manifestCopy }).ok, true);
+
+    fs.appendFileSync(copy, ' tampered');
+    const tampered = verifyMonetizationArtifact({ file: copy, manifestFile: manifestCopy });
     assert.equal(tampered.ok, false);
     assert.equal(tampered.reason, 'checksum-mismatch');
   } finally {
-    fs.writeFileSync(ARTIFACT_FILE, original);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   assert.equal(verifyMonetizationArtifact().ok, true);
+});
+
+test('prebuild dipilih sesuai platform/arsitektur, path di luar folder ditolak', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ryuu-prebuild-'));
+  try {
+    const name = `${process.platform}-${process.arch}`;
+    const target = path.join(dir, 'prebuilds', name, 'engine.node');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(ARTIFACT_FILE, target);
+    const bytes = fs.readFileSync(target);
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    const manifestFile = path.join(dir, 'manifest.json');
+    const base = {
+      version: '1.0.0',
+      artifact: 'engine.node',
+      runtime: 'napi',
+      sha256,
+      size: bytes.length,
+      prebuilds: [{ platform: process.platform, arch: process.arch, file: `prebuilds/${name}/engine.node`, sha256, size: bytes.length }],
+    };
+    fs.writeFileSync(manifestFile, JSON.stringify(base));
+
+    const selected = verifyMonetizationArtifact({ dir });
+    assert.equal(selected.ok, true);
+    assert.equal(path.resolve(selected.path), path.resolve(target));
+
+    // Platform lain tidak boleh dipakai di mesin ini.
+    const foreign = process.platform === 'win32' ? 'darwin' : 'win32';
+    const foreignArch = process.arch === 'x64' ? 'arm64' : 'x64';
+    fs.writeFileSync(manifestFile, JSON.stringify({
+      ...base,
+      prebuilds: [{ ...base.prebuilds[0], platform: foreign, arch: foreignArch }],
+    }));
+    assert.match(verifyMonetizationArtifact({ dir }).reason, /no-prebuild-for-platform/);
+
+    // Path traversal di manifest ditolak sebelum menyentuh filesystem.
+    fs.writeFileSync(manifestFile, JSON.stringify({
+      ...base,
+      prebuilds: [{ ...base.prebuilds[0], file: '../../evil.node' }],
+    }));
+    assert.equal(verifyMonetizationArtifact({ dir }).reason, 'prebuild-path-invalid');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('loadMonetizationEngine memuat artifact terverifikasi', () => {

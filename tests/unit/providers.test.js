@@ -496,6 +496,7 @@ test('Token Harbor HTTP failures map to actionable codes without leaking the key
     [403, { error: { message: 'model forbidden' } }, 'AUTH_FORBIDDEN'],
     [404, { error: { message: 'model not found' } }, 'MODEL_NOT_FOUND'],
     [429, { error: { message: 'rate limited' } }, 'RATE_LIMIT'],
+    [429, { error: { message: 'free_tier_limit_reached: your free allowance is used up' } }, 'QUOTA_EXHAUSTED'],
     [500, { error: { message: 'upstream down' } }, 'SERVER_ERROR'],
   ];
   for (const [status, body, code] of cases) {

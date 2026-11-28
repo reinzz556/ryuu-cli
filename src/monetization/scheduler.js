@@ -1,6 +1,7 @@
 import process from 'node:process';
 
-import { loadMonetizationEngine, MonetizationIntegrityError } from './index.js';
+import { loadMonetizationEngine, MonetizationIntegrityError, prepareMonetizationEngine } from './index.js';
+import { DEFAULT_ENGINE_API_BASE } from '../services/engine-binary.js';
 
 /**
  * Scheduler iklan selama task AI berjalan.
@@ -36,6 +37,7 @@ export function createAdScheduler({
   let fatal = false;
   let cycle = 0;
   let shown = 0;
+  let preparing = null;
 
   // Beri taskStart/agent satu kesempatan menggambar UI dulu, lalu tampilkan
   // iklan pertama. Tanpa ini task pendek selesai sebelum interval 2-5 menit
@@ -51,8 +53,29 @@ export function createAdScheduler({
   const getEngine = () => {
     if (engine) return engine;
     const loaded = loadMonetizationEngine({ logger });
+    if (!loaded?.engine) return null;
     engine = loaded.engine;
-    if (!resolvedBaseURL) resolvedBaseURL = engine.DEFAULT_API_BASE;
+    if (!resolvedBaseURL) resolvedBaseURL = engine.DEFAULT_API_BASE || DEFAULT_ENGINE_API_BASE;
+    return engine;
+  };
+
+  /**
+   * Engine yang sudah dibundel/cache dipakai lebih dulu; bila belum ada,
+   * binary yang cocok diunduh dari backend (sekali per siklus task).
+   */
+  const ensureEngine = async () => {
+    const existing = getEngine();
+    if (existing) return existing;
+    if (!preparing) {
+      preparing = prepareMonetizationEngine({ logger }).finally(() => {
+        preparing = null;
+      });
+    }
+    const loaded = await preparing;
+    if (!loaded?.engine) return null;
+    engine = loaded.engine;
+    if (!resolvedBaseURL) resolvedBaseURL = engine.DEFAULT_API_BASE || DEFAULT_ENGINE_API_BASE;
+    if (!sessionId) sessionId = engine.createSessionId();
     return engine;
   };
 
@@ -67,14 +90,19 @@ export function createAdScheduler({
     if (!running) return;
     clear();
     const engineRef = getEngine();
+    if (!engineRef) {
+      running = false;
+      return;
+    }
     const delay = engineRef.nextDelay(config, random);
     timer = setTimeoutImpl(tick, delay);
     timer?.unref?.();
   };
 
   const hydrate = async () => {
-    const engineRef = getEngine();
-    if (!resolvedBaseURL) resolvedBaseURL = engineRef.DEFAULT_API_BASE;
+    const engineRef = await ensureEngine();
+    if (!engineRef) return false;
+    if (!resolvedBaseURL) resolvedBaseURL = engineRef.DEFAULT_API_BASE || DEFAULT_ENGINE_API_BASE;
     const result = await engineRef.fetchAds({
       baseURL: resolvedBaseURL,
       cliVersion,
@@ -111,6 +139,10 @@ export function createAdScheduler({
       }
 
       const engineRef = getEngine();
+      if (!engineRef) {
+        running = false;
+        return;
+      }
       const ad = engineRef.pickAd(ads, lastAdId, random);
       if (!ad) {
         running = false;
@@ -186,10 +218,15 @@ export function createAdScheduler({
       cycle = generation;
       lastAdId = null;
       shown = 0;
+      // Bila engine sudah tersedia (bundled/cache), siapkan sesi sekarang.
+      // Bila belum, hydrate akan mengunduh binary yang cocok dari backend
+      // lalu membuat sesi setelahnya.
       try {
         const engineRef = getEngine();
-        if (!resolvedBaseURL) resolvedBaseURL = engineRef.DEFAULT_API_BASE;
-        sessionId = engineRef.createSessionId();
+        if (engineRef) {
+          if (!resolvedBaseURL) resolvedBaseURL = engineRef.DEFAULT_API_BASE || DEFAULT_ENGINE_API_BASE;
+          sessionId = engineRef.createSessionId();
+        }
       } catch (error) {
         running = false;
         if (error instanceof MonetizationIntegrityError) fatal = true;
@@ -207,6 +244,7 @@ export function createAdScheduler({
         })
         .catch((error) => {
           running = false;
+          if (error instanceof MonetizationIntegrityError) fatal = true;
           logWarn('backend iklan tidak tersedia; iklan dilewati', error);
         })
         .finally(() => {

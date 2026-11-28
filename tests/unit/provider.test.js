@@ -59,6 +59,16 @@ test('maps provider errors to actionable codes without leaking keys', () => {
   assert.equal(rate.code, 'RATE_LIMIT');
   assert.equal(rate.retryable, true);
 
+  const quota = mapProviderError(Object.assign(
+    new Error("Your free allowance for ':free' models is used up. It comes back on 5 Dec 2026 at 03:44 UTC."),
+    { status: 429 },
+  ));
+  assert.equal(quota.code, 'QUOTA_EXHAUSTED');
+  assert.equal(quota.retryable, false, 'a spent quota must not be retried');
+
+  const openAiQuota = mapProviderError(Object.assign(new Error('You exceeded your current quota.'), { status: 429 }));
+  assert.equal(openAiQuota.code, 'QUOTA_EXHAUSTED');
+
   const context = mapProviderError(Object.assign(new Error('maximum context length exceeded'), { status: 400 }));
   assert.equal(context.code, 'CONTEXT_LENGTH');
   assert.equal(context.retryable, false);
@@ -253,6 +263,31 @@ test('honors Retry-After when present and stops at the retry limit', async () =>
     assert.equal(delays.length, 2);
     assert.ok(delays.every((delay) => delay >= 1000), `delays: ${delays.join(',')}`);
   }, { maxRetries: 2 });
+});
+
+test('does not retry an exhausted quota and reports the provider reason', async () => {
+  await withConfig(async ({ config }) => {
+    let calls = 0;
+    const client = fakeClient(async () => {
+      calls += 1;
+      throw Object.assign(
+        new Error("Your free allowance for ':free' models is used up. It comes back on 5 Dec 2026 at 03:44 UTC."),
+        { status: 429, code: 'free_tier_limit_reached' },
+      );
+    });
+    const provider = new NvidiaProvider(config, { client, sleepImpl: async () => {} });
+    await assert.rejects(
+      provider.chat({ messages: [{ role: 'user', content: 'hi' }] }),
+      (error) => {
+        assert.equal(error.code, 'QUOTA_EXHAUSTED');
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /quota is used up/);
+        assert.match(error.message, /5 Dec 2026/, 'the provider reset date must survive into the error');
+        return true;
+      },
+    );
+    assert.equal(calls, 1, 'a quota error must not be retried');
+  }, { maxRetries: 3 });
 });
 
 test('does not retry authentication or context errors', async () => {

@@ -8,7 +8,7 @@ kompatibel dengan OpenAI: NVIDIA Integrate API dan Token Harbor sudah tersedia,
 dan provider lain bisa Anda daftarkan sendiri lewat konfigurasi.
 
 ```
-  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.7.2
+  ▄▄▄▄▄▄▄▄   Ryuu CLI v0.7.3
   ██▀▀▀▀██▄  workspace  /path/to/your/project
   ██    ▀██  runtime    Node.js v22.14.0 · Linux
   ██▄▄▄▄██▀  model      minimaxai/minimax-m3.1-flash
@@ -141,6 +141,35 @@ Dari source (untuk pengembangan):
 npm install
 node src/index.js --version
 ```
+
+### Pembaruan otomatis
+
+Setiap kali dijalankan, Ryuu mengecek versi terbaru `@ryuu-reinzz/ryuu-cli` di
+npm di latar belakang — tanpa menahan task, timeout 2 detik, dan diam saja bila
+offline. Jika ada versi lebih baru **dan** Ryuu berjalan dari instalasi npm
+(`node_modules`):
+
+1. task yang sedang berjalan dihentikan dan seluruh proses anak/MCP ditutup,
+2. paket versi baru diunduh dengan `npm pack`, diverifikasi versinya, lalu
+ditukar dengan paket lama; `node_modules` lama dipakai ulang dan direkonsiliasi,
+dengan rollback otomatis bila pemasangan gagal,
+3. Ryuu keluar dengan pesan `Jalankan ulang ryuu`.
+
+Salinan dari git checkout tidak pernah ditimpa (perubahan lokal bisa hilang):
+Ryuu hanya memberi tahu versi terbaru dan perintah
+`npm install -g @ryuu-reinzz/ryuu-cli@latest`. Matikan pengecekan dengan
+`RYUU_NO_UPDATE_CHECK=1`; pengecekan juga mati otomatis saat test dan di CI.
+
+### Binary engine & platform
+
+Mesin iklan CLI adalah addon native (`engine.node`), bukan JavaScript. Saat
+start, Ryuu mengecek platform/arsitektur/libc lalu memakai prebuild yang cocok
+dari paket. Bila paket tidak membawa prebuild untuk platform itu, binary dipilih
+dari backend (`/api/v1/engine/prebuilds`), diunduh, diverifikasi SHA-256 dan
+ukurannya, lalu di-cache di `<config>/engine`; cache dipakai ulang tanpa jaringan
+selama 6 jam. Kegagalan jaringan hanya melewati iklan untuk sesi itu.
+Override dengan `RYUU_ENGINE_API_BASE` / `RYUU_ENGINE_CACHE`, atau matikan
+prefetch dengan `RYUU_NO_ENGINE_PREFETCH=1`. Detail: `docs/monetization.md`.
 
 Setelah terpasang, simpan kunci provider di `config.json` (owner-only, di luar
 repo) — file itu dibuat otomatis pada run pertama:
@@ -1205,6 +1234,12 @@ konteks/tugas, atau pindah model/provider. Ryuu mencoba ulang kegagalan sesaat
 `429`/`5xx`/jaringan dengan backoff eksponensial terbatas beserta jitter, serta
 menghormati `Retry-After` bila ada.
 
+Bila respons menyatakan kuota atau saldo **habis** (mis. `free_tier_limit_reached`,
+`insufficient_quota`, atau saldo nol), Ryuu tidak mencoba ulang: run langsung
+berhenti dengan kode `QUOTA_EXHAUSTED` dan pesan asli provider (tanggal reset,
+cara top up). Retry tidak akan mengubah hasilnya dan hanya membuat UI tampak
+berhenti di `thinking`.
+
 ### Model bawaan sangat lambat atau habis waktu
 
 Model bawaan sekarang `minimaxai/minimax-m3.1-flash` (entri ke-6 di `/model`).
@@ -1259,6 +1294,11 @@ dan memutar ulang permintaan dengan backoff eksponensial (maksimal 30 detik
 antar-percobaan). Baris `♥ link restored` menandai saat provider menjawab lagi,
 dan run melanjutkan dari tempat ia berhenti. Baris aktivitas tetap berputar
 selama penantian, sehingga terminal tidak terlihat membeku.
+
+`429` adalah pengecualian: maksimal **3 kali** penyambungan ulang, berapa pun
+nilai `agent.maxRecoveryAttempts`. Provider sudah mencoba ulang dengan backoff-nya
+sendiri, jadi batas laju yang tidak kunjung pulih berakhir sebagai error yang
+jelas, bukan `thinking` berkepanjangan.
 
 `agent.maxRecoveryAttempts: 0` (bawaan) berarti **tanpa batas percobaan**: agent
 terus menyambung ulang sampai provider menjawab, tenggat tugas tercapai, atau
@@ -1385,7 +1425,7 @@ secara manual di Windows.
 - `read_url` memakai ekstraktor HTML bawaan kecil: halaman yang dirender
   JavaScript, PDF, dan gambar tidak bisa dibaca, dan teks hasil ekstraksi adalah
   penyederhanaan dari halaman tersebut.
-- Ini project 0.7.2: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
+- Ini project 0.7.3: harapkannya masih berkekakuan. Tidak ada klaim bebas bug.
 
 ## Daftar periksa validasi API langsung
 

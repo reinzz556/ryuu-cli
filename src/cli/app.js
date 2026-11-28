@@ -510,6 +510,17 @@ export async function createApp({
     if (taskPromise) await taskPromise.catch(() => {});
   }
 
+  /**
+   * Stop the session because a newer release is installed: abort the running
+   * task, close the prompt and let `runInteractive` unwind so the caller can
+   * replace the package and exit.
+   */
+  function requestUpdate() {
+    stopping = true;
+    if (activeTask) activeTask.controller.abort();
+    prompts?.close();
+  }
+
   async function close() {
     if (closed) return;
     closed = true;
@@ -554,6 +565,7 @@ export async function createApp({
     getProjectSummary,
     getLastSummary: () => lastSummary,
     cancelActiveTask: state.cancelActiveTask,
+    requestUpdate,
     setProvider: switchProvider,
     providerLimitations,
     close,

@@ -84,6 +84,16 @@ function retryAfterMs(error) {
   return null;
 }
 
+/**
+ * Provider wording that means the quota/credit is gone, not "slow down a moment".
+ *
+ * A short-term rate limit clears on its own, so it stays retryable; a spent
+ * allowance or an insufficient balance does not, and retrying only holds the
+ * run on `thinking` until the task deadline.
+ */
+const QUOTA_EXHAUSTED_RE =
+  /insufficient[\s_-]?quota|free[\s_-]?tier[\s_-]?limit|exceeded your current quota|billing[\s_-]?hard[\s_-]?limit|credit balance is too low|balance[\s_-]?zero|allowance\b[^.]{0,80}\b(used up|exhausted|depleted)|quota\b[^.]{0,40}\b(used up|exhausted|exceeded)/i;
+
 /** Map raw SDK/network failures onto actionable ProviderError instances. */
 export function mapProviderError(error, {
   model,
@@ -139,6 +149,15 @@ export function mapProviderError(error, {
     );
   }
   if (status === 429) {
+    // A spent quota is fatal for this run: every retry would be rejected the
+    // same way. Show the provider's own explanation (reset date, how to get
+    // credit) instead of looping on it.
+    if (QUOTA_EXHAUSTED_RE.test(`${code} ${message}`)) {
+      return new ProviderError(
+        `${providerName} quota is used up. Retrying will not help until it resets or the account is topped up. ${message}`,
+        { code: 'QUOTA_EXHAUSTED', status, retryable: false },
+      );
+    }
     return new ProviderError(
       `${providerName} API rate limit reached (429). Provider-side quotas may apply; wait and retry, or reduce request size. ${message}`,
       { code: 'RATE_LIMIT', status, retryable: true },

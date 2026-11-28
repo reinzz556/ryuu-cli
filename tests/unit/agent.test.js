@@ -605,6 +605,22 @@ test('a provider failure that cannot be recovered is reported instead of retried
   }
 });
 
+test('a rate limit stops after a few recoveries instead of holding the run', async () => {
+  const limited = () => new ProviderError('rate limited', { code: 'RATE_LIMIT', status: 429, retryable: true });
+  const ctx = await setup({
+    responses: [limited(), limited(), limited(), limited(), limited(), response({ content: 'unreachable' })],
+    configOverrides: { maxRecoveryAttempts: 0, recoveryBackoffMs: 100 },
+  });
+  try {
+    const summary = await ctx.agent.run('do something');
+    assert.equal(summary.status, 'failed');
+    assert.equal(summary.error.code, 'RATE_LIMIT');
+    assert.equal(ctx.provider.calls.length, 4, 'one call plus three bounded recoveries');
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
 test('an identical failing command is blocked instead of being repeated forever', async () => {
   const argv = ['grep', '-rn', 'zzz_no_match_zzz', 'src'];
   const ctx = await setup({
